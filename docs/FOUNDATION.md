@@ -17,6 +17,7 @@ This document captures the phase 1 product foundation so future implementation w
 ## Architecture Direction
 
 - Local agent first: keep the current localhost Node.js server as the development foundation.
+- Windows target, macOS development loop: build core behavior so it can run and be tested on macOS, then validate Windows-specific installation, startup, permissions, Edge/Chrome deployment, child-account behavior, and tamper resistance on Windows.
 - Browser enforcement first: Chrome is the first target, with Edge and Firefox later.
 - Cloud API later: sync policies down and activity up after local policy enforcement is useful.
 - Parent dashboard: build as a responsive web app that works well on mobile before considering native mobile apps.
@@ -32,17 +33,21 @@ This document captures the phase 1 product foundation so future implementation w
 - Current browser extension: Manifest V3 Chrome extension in `extension/`.
 - Current trust model: localhost-only server plus bearer token between extension and server.
 - Storage direction: use SQLite for structured local activity/events. Keep Markdown only as an optional debug/export format for manually triggered snapshots.
+- Testing direction: use macOS for fast local development and Windows for release validation. Add GitHub Actions Windows coverage as soon as script and packaging behavior become important.
 
 ## Near-Term Build Target
 
 The next milestone should turn the current capture prototype into a local controls MVP:
 
-1. Add child profiles and a local policy file.
-2. Add a local SQLite event store for visits, blocks, policy decisions, override requests, tamper signals, device status, timestamps, domains, categories, and child profile IDs.
-3. Implement a testable rule engine.
-4. Add URL matching and block decisions in the extension.
-5. Replace user-triggered capture as the primary flow with passive policy enforcement events.
-6. Keep reporting local until the cloud sync model is ready.
+1. Establish the platform-neutral development loop.
+2. Add the local SQLite event store.
+3. Add child profiles and local policy.
+4. Implement the testable rule engine.
+5. Add browser enforcement.
+6. Add local reporting.
+7. Harden the local agent.
+
+The detailed Phase 2 goal structure and acceptance criteria live in [ROADMAP.md](../ROADMAP.md).
 
 ## Storage Policy
 
@@ -50,3 +55,9 @@ The next milestone should turn the current capture prototype into a local contro
 - Store URLs, domains, timestamps, profile/device identifiers, policy decision IDs, categories, and alert/tamper signals as structured data.
 - Do not store full page text by default. Full content should require an explicit feature decision and privacy review.
 - Keep Markdown for optional debug bundles, parent-requested exports, or manually triggered page/selection snapshots.
+
+## Testing Policy
+
+- Keep local agent, SQLite store, rule engine, API routes, reporting queries, dashboard, and Chrome extension behavior portable enough to test on macOS.
+- Validate Windows scheduled tasks or services, installer behavior, filesystem permissions, Edge/Chrome policy deployment, child-account behavior, tamper signals, and uninstall/re-enrollment on Windows.
+- Use GitHub Actions Windows runners for repeatable checks before relying on a real Windows device for final validation.

@@ -20,15 +20,70 @@ Status: completed in the initial foundation pass. See [docs/FOUNDATION.md](docs/
 
 ## Phase 2: Core Controls MVP
 
-- Build a rule engine for allow lists, block lists, category rules, time schedules, per-child policies, per-device policies, temporary overrides, and default allow/block behavior.
-- Add browser enforcement that can block matching URLs before page load where possible.
-- Show a SafeHarbor block page with the rule reason and parent-approved override flow.
-- Log blocked and allowed visits.
-- Capture page metadata without storing excessive private content by default.
-- Replace Markdown-first capture storage with a local SQLite event store for visits, blocks, policy decisions, override requests, tamper signals, device status, timestamps, domains, categories, and child profile IDs.
-- Keep Markdown output only as an optional debug/export path for manually triggered page or selection snapshots.
-- Avoid storing full page text by default. Store metadata and rule decisions unless a feature explicitly needs content.
-- Harden the local server with better extension-to-server auth, token rotation, config validation, structured logs, crash recovery, health checks, and automatic startup on Windows/macOS.
+Phase 2 should produce a local, testable parental-controls MVP that works on macOS for development and is ready for Windows validation.
+
+**Goal 2.1: Platform-Neutral Development Loop**
+Outcome: core controls can be built and tested on macOS while Windows remains the primary deployment target.
+
+Done when:
+- The local agent, SQLite store, rule engine, API routes, reporting queries, and Chrome extension behavior run on macOS.
+- Windows-only behavior is isolated behind scripts or small platform modules.
+- GitHub Actions has at least one Windows runner job for checks and script validation.
+
+**Goal 2.2: Local Data Model and SQLite Store**
+Outcome: SafeHarbor has a structured local event store for policy history and reporting.
+
+Done when:
+- SQLite stores visits, blocks, policy decisions, override requests, tamper signals, device status, timestamps, domains, categories, child profile IDs, and device IDs.
+- Markdown output is only an optional debug/export path for manually triggered page or selection snapshots.
+- Full page text is not stored by default.
+- Database migrations or schema initialization are repeatable and covered by tests.
+
+**Goal 2.3: Child Profiles and Local Policy**
+Outcome: policies can be assigned to child profiles and evaluated locally.
+
+Done when:
+- A local profile model exists for at least one child profile and one managed device.
+- Policies support allow lists, block lists, schedules, categories, per-child rules, per-device rules, temporary overrides, and a default allow/block mode.
+- Policy files or database records are validated before use.
+- Invalid policy config fails clearly without crashing the agent.
+
+**Goal 2.4: Rule Engine**
+Outcome: URL and schedule decisions are deterministic, testable, and independent of browser UI code.
+
+Done when:
+- The rule engine accepts URL, timestamp, child profile, device, and policy inputs.
+- It returns allow/block decisions with rule IDs, reasons, and enough metadata for reporting.
+- Unit tests cover exact domain matches, subdomains, paths, schedules, overrides, default behavior, and conflict precedence.
+- Rule decisions do not require network access.
+
+**Goal 2.5: Browser Enforcement**
+Outcome: Chrome can enforce local policy decisions before or during navigation.
+
+Done when:
+- The extension checks URLs against the local policy path.
+- Blocked navigation shows a SafeHarbor block page with the reason and timestamp.
+- Allowed and blocked visits are logged to SQLite.
+- The extension handles missing server/token/policy states with clear parent-facing errors.
+- The current manual page/selection capture flow remains available only as an explicit debug/export action.
+
+**Goal 2.6: Local Reporting**
+Outcome: parents can inspect useful local activity without cloud sync.
+
+Done when:
+- `/status` or a local status page reads from SQLite.
+- Reports show recent activity, blocked attempts, top domains, category counts, schedule violations, and tamper signals where available.
+- Reporting queries avoid exposing full page text by default.
+- Report output is usable from the Chrome extension status page or local server page.
+
+**Goal 2.7: Local Agent Robustness**
+Outcome: the local server is reliable enough for regular test use.
+
+Done when:
+- Extension-to-server auth is tightened beyond the current static-token prototype or has a documented upgrade path.
+- Token rotation, config validation, structured logs, crash-safe startup, health checks, and clear error responses exist.
+- The Windows startup script and macOS/Linux start script target the current server entrypoint.
+- Startup and config behavior are covered by automated checks where practical.
 
 ## Phase 3: Parent Dashboard
 
@@ -43,6 +98,9 @@ Status: completed in the initial foundation pass. See [docs/FOUNDATION.md](docs/
 - Add parent account auth with secure sessions, password reset, optional MFA, and support for multiple parents or guardians.
 - Add device enrollment with pairing codes, device names, child assignment, last-seen status, revocation, and re-enrollment handling.
 - Add cloud sync so agents pull policies, upload activity/events, cache while offline, handle conflicts, and apply versioned policy updates.
+- Treat Windows as the release validation platform for installation, startup, filesystem permissions, Edge deployment, child-account behavior, and tamper-resistance flows.
+- Support macOS as the fast development loop for server, extension, SQLite, rule-engine, dashboard, API, and reporting work.
+- Add GitHub Actions Windows jobs for Node checks, tests, PowerShell syntax/script validation, packaging checks, and installer smoke tests where possible.
 
 ## Phase 5: Tamper Resistance
 
@@ -58,7 +116,14 @@ Status: completed in the initial foundation pass. See [docs/FOUNDATION.md](docs/
 - Add and maintain `SECURITY.md`, `LICENSE`, `CONTRIBUTING.md`, issue templates, GitHub Actions checks, and dependency scanning.
 - Document the threat model and limitations honestly.
 - Keep deployment secrets out of the repository.
-- Add CI for Node syntax checks, rule-engine unit tests, API integration tests, extension tests where practical, end-to-end browser tests for allow/block flows, and release builds.
+- Add CI for Node syntax checks, rule-engine unit tests, API integration tests, extension tests where practical, end-to-end browser tests for allow/block flows, release builds, and Windows runner validation.
+
+## Testing Strategy
+
+- macOS fast loop: run the localhost server, Chrome extension, SQLite event store, rule engine, parent dashboard, API routes, and reporting queries during daily development.
+- Windows release loop: validate scheduled task or service behavior, installer scripts, filesystem permissions, Edge/Chrome deployment behavior, child-account behavior, tamper signals, and uninstall/re-enrollment flows.
+- CI loop: run cross-platform Node checks and tests on macOS, Windows, and Linux where practical, with Windows-specific PowerShell and packaging checks before releases.
+- Real-device loop: test on at least one Windows child-device profile before treating tamper resistance, startup behavior, or browser coverage as done.
 
 ## Recommended Build Order
 
@@ -69,7 +134,8 @@ Status: completed in the initial foundation pass. See [docs/FOUNDATION.md](docs/
 5. Add real blocking in the extension.
 6. Add child profiles and policies.
 7. Add local reporting from SQLite.
-8. Add the cloud API and parent dashboard.
-9. Add enrollment and sync.
-10. Add alerts.
-11. Harden tamper detection and deployment.
+8. Add cross-platform CI with Windows runner coverage.
+9. Add the cloud API and parent dashboard.
+10. Add enrollment and sync.
+11. Add alerts.
+12. Harden tamper detection and deployment.
