@@ -8,7 +8,8 @@ This document captures the phase 1 product foundation so future implementation w
 - Child profile: the person receiving policies. Policies should attach primarily to profiles, then apply across assigned devices.
 - Device: a managed computer, phone, or tablet with enrollment state, assigned child profile, platform, hostname, last-seen status, and agent version.
 - Browser extension: the browser-level observer and enforcement surface for URL/page controls.
-- Local agent: the localhost service that stores local config, receives extension events, applies local policy support, and syncs with the cloud later.
+- Local agent: the device-local service that stores local config, receives extension events, applies local policy support, and syncs with a home hub or the cloud later.
+- Home hub: an optional Raspberry Pi/Linux server on the home LAN that hosts the parent dashboard, central SQLite database, device enrollment, policy source of truth, and aggregated reports.
 - Policy: a versioned set of rules, schedules, category decisions, override rules, and defaults.
 - Event: a timestamped fact from a device or extension, such as page allowed, page blocked, override requested, agent started, extension disabled, or policy applied.
 - Activity log: normalized event history used for reporting and parent review. Store this in SQLite by default.
@@ -20,9 +21,9 @@ This document captures the phase 1 product foundation so future implementation w
 - Windows target, macOS development loop: build core behavior so it can run and be tested on macOS, then validate Windows-specific installation, startup, permissions, Edge/Chrome deployment, child-account behavior, and tamper resistance on Windows.
 - Browser enforcement first: Chrome is the first target, with Edge and Firefox later.
 - Cloud API later: sync policies down and activity up after local policy enforcement is useful.
-- Local sync first: the agent now exposes localhost enrollment, heartbeat, policy pull, and event upload endpoints as the testable shape for later cloud sync.
+- Local sync first: the agent now exposes enrollment, heartbeat, policy pull, and event upload endpoints as the testable shape for Raspberry Pi/home-hub sync and later cloud sync.
 - Parent dashboard: build as a responsive web app that works well on mobile before considering native mobile apps.
-- Local dashboard first: the extension-hosted dashboard is the current parent interface until cloud accounts and sync exist.
+- Home dashboard first: the extension-hosted dashboard can point at a localhost agent or Raspberry Pi home hub until cloud accounts and sync exist.
 - Native helper later: add stronger service installation, watchdog, and tamper detection after the policy model is stable.
 
 ## Phase 1 Decisions
@@ -33,7 +34,7 @@ This document captures the phase 1 product foundation so future implementation w
 - Local override environment variable: `SAFEHARBOR_HOME`.
 - Current server entrypoint: `server/safeharbor-server.js`.
 - Current browser extension: Manifest V3 Chrome extension in `extension/`.
-- Current trust model: localhost-only server plus bearer token between extension and server.
+- Current trust model: localhost by default, optional private-LAN home-hub binding, scoped parent/device bearer tokens between clients and server, and no internet exposure without a VPN or HTTPS hardening.
 - Storage direction: use SQLite for structured local activity/events. Keep Markdown only as an optional debug/export format for manually triggered snapshots.
 - Testing direction: use macOS for fast local development and Windows for release validation. Add GitHub Actions Windows coverage as soon as script and packaging behavior become important.
 

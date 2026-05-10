@@ -1,6 +1,6 @@
 # SafeHarbor Roadmap
 
-SafeHarbor is currently an early functional prototype: a Chrome extension talks to a localhost Node.js server, authenticates with a local token, and writes browser captures to local Markdown files. The next storage target is SQLite for structured local activity/events, with Markdown kept only for optional debug or export captures. The core parental-controls product still needs policy enforcement, accounts, parent dashboards, reporting, sync, alerts, and stronger tamper resistance.
+SafeHarbor is currently a local parental-controls MVP: a Chrome extension talks to a Node.js agent, authenticates with scoped parent/device tokens, evaluates URL policy, blocks configured navigation, stores structured activity in SQLite, and exposes an extension or server-hosted parent dashboard with reporting, exportable reports, SQLite backups, alert records, policy import/export, device enrollment/revocation, Raspberry Pi/home-hub mode, idempotent sync endpoints, and simulator tooling for multi-device aggregation. Markdown captures remain only as optional debug/export snapshots. The core product still needs hosted parent accounts, cloud sync, email/push delivery, Windows release validation, and stronger tamper resistance.
 
 ## Phase 1: Product Foundation
 
@@ -94,18 +94,23 @@ Status: local dashboard MVP completed. Cloud-backed alert delivery remains futur
 - [x] Build a mobile-friendly parent dashboard.
 - [x] Include child profile lists, device status, recent activity, blocked attempts, rules editor, schedules editor, alert preferences, and temporary allow/deny actions.
 - [x] Add local reporting: daily summaries, top domains, blocked categories, estimated online time, schedule-violation counts, and privacy-preserving browsing detail.
-- [ ] Add exportable reports.
+- [x] Add exportable reports.
+- [x] Add local alert records for blocked attempts, tamper signals, offline agents, repeated domains, and schedule violations.
+- [x] Add server-hosted dashboard access for Raspberry Pi/home-hub use without installing the extension.
+- [x] Add local SQLite backup downloads and policy import/export.
 - [ ] Add alerts by email first, then push notifications later.
-- [ ] Alert on blocked attempts, tamper signals, offline agents, repeated risky searches/domains, and schedule violations.
+- [ ] Alert on repeated risky searches.
 
 ## Phase 4: Accounts, Sync, and Deployment
 
-- Status: local enrollment/sync foundation completed. Hosted accounts and cloud sync remain future work.
+- Status: local enrollment/sync foundation, scoped parent/device tokens, revocation, idempotent event upload, simulator tooling, direct dashboard hosting, backup/import/export, and Raspberry Pi/home-hub mode completed. Hosted accounts and cloud sync remain future work.
 
 - [ ] Add parent account auth with secure sessions, password reset, optional MFA, and support for multiple parents or guardians.
 - [x] Add local device enrollment with pairing codes, device names, child assignment, and last-seen status.
-- [ ] Add device revocation and re-enrollment handling.
+- [x] Add device revocation and re-enrollment handling.
 - [x] Add local sync endpoints so agents can pull policies and upload activity/events.
+- [x] Add idempotent event upload with per-device local event IDs.
+- [x] Add Raspberry Pi/home-hub mode for central dashboard hosting and multi-device SQLite aggregation on a home LAN.
 - [ ] Add cloud sync so agents pull policies, upload activity/events, cache while offline, handle conflicts, and apply versioned policy updates.
 - Treat Windows as the release validation platform for installation, startup, filesystem permissions, Edge deployment, child-account behavior, and tamper-resistance flows.
 - Support macOS as the fast development loop for server, extension, SQLite, rule-engine, dashboard, API, and reporting work.

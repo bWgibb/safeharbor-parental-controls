@@ -15,6 +15,9 @@
       </div>
       <div class="top-actions">
         <button id="refresh" type="button">Refresh</button>
+        <button id="backupDb" type="button">Backup DB</button>
+        <button id="exportPolicy" type="button">Export Policy</button>
+        <button id="importPolicy" type="button">Import Policy</button>
         <button id="options" type="button">Options</button>
       </div>
     </header>
@@ -105,11 +108,38 @@
           <input id="alertOffline" type="checkbox">
           Agent offline
         </label>
+        <div id="alerts" class="stack alert-list"></div>
       </div>
     </section>
 
     <section class="panel full">
-      <h2>Reports</h2>
+      <div class="section-header">
+        <h2>Reports</h2>
+        <div class="top-actions">
+          <button id="exportCsv" type="button">Export CSV</button>
+          <button id="exportJson" type="button">Export JSON</button>
+        </div>
+      </div>
+      <div class="filter-bar">
+        <label>
+          Profile
+          <select id="reportProfile"></select>
+        </label>
+        <label>
+          Device
+          <select id="reportDevice"></select>
+        </label>
+        <label>
+          From
+          <input id="reportFrom" type="date">
+        </label>
+        <label>
+          To
+          <input id="reportTo" type="date">
+        </label>
+        <button id="applyFilters" type="button">Apply</button>
+        <button id="clearFilters" type="button">Clear</button>
+      </div>
       <div class="report-grid">
         <div>
           <h3>Blocked Attempts</h3>
@@ -130,6 +160,13 @@
           <table>
             <thead><tr><th>Day</th><th>Total</th><th>Blocked</th></tr></thead>
             <tbody id="dailySummary"></tbody>
+          </table>
+        </div>
+        <div>
+          <h3>Device Activity</h3>
+          <table>
+            <thead><tr><th>Device</th><th>Total</th><th>Blocked</th></tr></thead>
+            <tbody id="deviceSummary"></tbody>
           </table>
         </div>
         <div>

@@ -34,12 +34,63 @@ test('seeds local profile, device, policy, and reports events', () => {
     category: 'demo',
     source: 'test'
   });
+  const inserted = store.recordEvent({
+    eventKey: 'local-device:duplicate-test',
+    type: 'visit_decision',
+    timestamp: '2026-05-10T12:02:00.000Z',
+    url: 'https://games.example.org/',
+    domain: 'games.example.org',
+    profileId: 'default-child',
+    deviceId: 'local-device',
+    decision: 'block',
+    ruleId: 'games',
+    reason: 'Games are blocked',
+    category: 'games',
+    source: 'test'
+  });
+  const duplicate = store.recordEvent({
+    eventKey: 'local-device:duplicate-test',
+    type: 'visit_decision',
+    timestamp: '2026-05-10T12:02:00.000Z',
+    url: 'https://games.example.org/',
+    domain: 'games.example.org',
+    profileId: 'default-child',
+    deviceId: 'local-device',
+    decision: 'block',
+    ruleId: 'games',
+    reason: 'Games are blocked',
+    category: 'games',
+    source: 'test'
+  });
+  assert.equal(inserted.inserted, true);
+  assert.equal(duplicate.inserted, false);
 
   const reports = store.reports();
-  assert.equal(reports.counts.totalEvents, 1);
-  assert.equal(reports.counts.blockedVisits, 1);
+  assert.equal(reports.counts.totalEvents, 2);
+  assert.equal(reports.counts.blockedVisits, 2);
   assert.equal(reports.topDomains[0].domain, 'example.com');
   assert.equal(reports.categoryCounts[0].category, 'demo');
+  assert.equal(reports.deviceSummary[0].deviceId, 'local-device');
+  assert.equal(reports.deviceSummary[0].blocked, 2);
+  assert.equal(reports.profileSummary[0].profileId, 'default-child');
+  const eventsToSync = store.eventsAfterId(0);
+  assert.equal(eventsToSync.length, 2);
+  assert.equal(eventsToSync[0].id, 1);
+  assert.equal(eventsToSync[0].metadata.policyId, undefined);
+
+  store.recordEvent({
+    type: 'tamper_signal',
+    timestamp: '2026-05-10T12:03:00.000Z',
+    profileId: 'default-child',
+    deviceId: 'local-device',
+    reason: 'Extension disabled',
+    source: 'test'
+  });
+  store.generateAlerts('2026-05-10T12:04:00.000Z');
+  assert.ok(store.alerts().rows.some(alert => alert.type === 'tamper_signal'));
+
+  const revoked = store.revokeDevice('local-device', 'Test revoke', '2026-05-10T12:05:00.000Z');
+  assert.equal(revoked.status, 'revoked');
 
   store.close();
 });

@@ -42,12 +42,40 @@ async function loadSettings() {
 async function saveSettings() {
   const serverUrl = serverUrlInput.value.trim().replace(/\/+$/, '') || DEFAULT_SERVER_URL;
   const token = tokenInput.value.trim();
-  if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(serverUrl)) {
-    setStatus('Server URL must be localhost or 127.0.0.1.', 'error');
+  if (!isAllowedServerUrl(serverUrl)) {
+    setStatus('Server URL must be localhost or a private home-network address.', 'error');
     return;
   }
   await chrome.storage.local.set({ serverUrl, token });
   setStatus('Options saved.', 'success');
+}
+
+function isAllowedServerUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) return false;
+  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return false;
+
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+  if (host.endsWith('.local')) return true;
+  return isPrivateIpv4(host);
+}
+
+function isPrivateIpv4(host) {
+  const parts = host.split('.').map(part => Number(part));
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  if (parts[0] === 10) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parts[0] === 169 && parts[1] === 254) return true;
+  return false;
 }
 
 function setStatus(text, className) {

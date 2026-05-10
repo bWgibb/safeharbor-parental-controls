@@ -16,9 +16,13 @@ let state = null;
 let policy = null;
 
 const $ = id => document.getElementById(id);
+const hasChromeApi = typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
 
 $('refresh').addEventListener('click', loadDashboard);
-$('options').addEventListener('click', () => chrome.runtime.openOptionsPage());
+$('options').addEventListener('click', openOptions);
+$('backupDb').addEventListener('click', backupDatabase);
+$('exportPolicy').addEventListener('click', exportPolicy);
+$('importPolicy').addEventListener('click', importPolicy);
 $('defaultAction').addEventListener('change', () => {
   policy.defaultAction = $('defaultAction').value;
   savePolicy();
@@ -28,6 +32,10 @@ $('blockForm').addEventListener('submit', event => addDomain(event, 'blockedDoma
 $('scheduleForm').addEventListener('submit', addSchedule);
 $('overrideForm').addEventListener('submit', addOverride);
 $('generateCode').addEventListener('click', generateEnrollmentCode);
+$('applyFilters').addEventListener('click', loadFilteredReports);
+$('clearFilters').addEventListener('click', clearReportFilters);
+$('exportCsv').addEventListener('click', () => exportReport('csv'));
+$('exportJson').addEventListener('click', () => exportReport('json'));
 
 for (const id of ['alertBlocked', 'alertTamper', 'alertOffline']) {
   $(id).addEventListener('change', saveAlertPrefs);
@@ -38,7 +46,7 @@ loadDashboard();
 async function loadDashboard() {
   setStatus('Loading...', '');
   try {
-    settings = await chrome.storage.local.get({
+    settings = await getStoredSettings({
       serverUrl: DEFAULT_SERVER_URL,
       token: '',
       alertBlocked: true,
@@ -55,6 +63,32 @@ async function loadDashboard() {
   } catch (error) {
     setStatus(error.message, 'error');
   }
+}
+
+async function getStoredSettings(defaults) {
+  if (hasChromeApi) return chrome.storage.local.get(defaults);
+  return loadWebSettings(defaults);
+}
+
+function loadWebSettings(defaults = {}) {
+  const query = new URLSearchParams(window.location.search);
+  const queryToken = query.get('token') || '';
+  if (queryToken) localStorage.setItem('safeharborToken', queryToken);
+  return {
+    serverUrl: localStorage.getItem('safeharborServerUrl') || window.location.origin || defaults.serverUrl || DEFAULT_SERVER_URL,
+    token: queryToken || localStorage.getItem('safeharborToken') || defaults.token || '',
+    alertBlocked: localStorage.getItem('safeharborAlertBlocked') !== 'false',
+    alertTamper: localStorage.getItem('safeharborAlertTamper') !== 'false',
+    alertOffline: localStorage.getItem('safeharborAlertOffline') !== 'false'
+  };
+}
+
+function saveWebSettings(values) {
+  if (values.serverUrl != null) localStorage.setItem('safeharborServerUrl', values.serverUrl);
+  if (values.token != null) localStorage.setItem('safeharborToken', values.token);
+  if (values.alertBlocked != null) localStorage.setItem('safeharborAlertBlocked', String(Boolean(values.alertBlocked)));
+  if (values.alertTamper != null) localStorage.setItem('safeharborAlertTamper', String(Boolean(values.alertTamper)));
+  if (values.alertOffline != null) localStorage.setItem('safeharborAlertOffline', String(Boolean(values.alertOffline)));
 }
 
 async function fetchJson(path, options = {}) {
@@ -75,8 +109,10 @@ function renderDashboard() {
   $('subtitle').textContent = `${state.app} ${state.version} on ${state.host}:${state.port}`;
   renderMetrics(state.reports.counts);
   renderFamily();
+  renderReportFilters();
   renderPolicy();
   renderReports();
+  renderAlerts();
   renderAlertPrefs();
 }
 
@@ -102,9 +138,25 @@ function renderFamily() {
     ...state.profiles.map(profile => summaryRow(profile.name, profile.id))
   );
   $('devices').replaceChildren(
-    ...state.devices.map(device => summaryRow(device.name, `${device.status} · ${device.platform} · ${formatReginaTime(device.lastSeenAt)}`))
+    ...state.devices.map(device => deviceRow(device))
   );
   renderEnrollmentCodes();
+}
+
+function deviceRow(device) {
+  const row = summaryRow(
+    device.name,
+    `${device.status} · ${device.platform} · ${formatReginaTime(device.lastSeenAt)}`
+  );
+  if (device.revokedAt) row.classList.add('revoked');
+  else {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Revoke';
+    button.addEventListener('click', () => revokeDevice(device));
+    row.append(button);
+  }
+  return row;
 }
 
 function renderEnrollmentCodes() {
@@ -189,11 +241,44 @@ function renderReports() {
   ]);
   renderTable('topDomains', state.reports.topDomains, item => [item.domain, item.count]);
   renderTable('dailySummary', state.reports.dailySummary, item => [item.day, item.total, item.blocked]);
+  renderTable('deviceSummary', state.reports.deviceSummary, item => [
+    item.name || item.deviceId,
+    item.total,
+    item.blocked
+  ]);
   renderTable('recentActivity', state.recentActivity, item => [
     formatReginaTime(item.timestamp),
     item.decision || item.type,
     item.domain || ''
   ]);
+}
+
+function renderReportFilters() {
+  const currentProfile = $('reportProfile').value;
+  const currentDevice = $('reportDevice').value;
+  $('reportProfile').replaceChildren(
+    option('', 'All profiles'),
+    ...state.profiles.map(profile => option(profile.id, profile.name))
+  );
+  $('reportDevice').replaceChildren(
+    option('', 'All devices'),
+    ...state.devices.map(device => option(device.id, device.name))
+  );
+  $('reportProfile').value = currentProfile;
+  $('reportDevice').value = currentDevice;
+}
+
+function renderAlerts() {
+  const alerts = state.alerts && Array.isArray(state.alerts.rows) ? state.alerts.rows : [];
+  if (!alerts.length) {
+    $('alerts').replaceChildren(stackItem('No open alerts', null));
+    return;
+  }
+  $('alerts').replaceChildren(...alerts.slice(0, 8).map(alert => {
+    const row = stackItem(`${alert.severity} · ${alert.title} · ${alert.message}`, () => resolveAlert(alert.id));
+    row.classList.add(`alert-${alert.severity}`);
+    return row;
+  }));
 }
 
 function renderTable(targetId, items, mapper) {
@@ -279,13 +364,163 @@ async function savePolicy() {
   }
 }
 
+async function revokeDevice(device) {
+  if (!confirm(`Revoke ${device.name}? It will stop syncing until re-enrolled.`)) return;
+  setStatus('Revoking device...', '');
+  try {
+    await fetchJson('/devices/revoke', {
+      method: 'POST',
+      body: JSON.stringify({ deviceId: device.id, reason: 'Revoked from dashboard' })
+    });
+    await loadDashboard();
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+async function resolveAlert(alertId) {
+  setStatus('Resolving alert...', '');
+  try {
+    await fetchJson('/alerts/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ alertId })
+    });
+    await loadDashboard();
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+async function loadFilteredReports() {
+  setStatus('Loading reports...', '');
+  try {
+    const result = await fetchJson(`/reports/local?${reportQuery()}`);
+    state.reports = result.reports;
+    state.recentActivity = result.recentActivity;
+    state.alerts = result.alerts || state.alerts;
+    renderMetrics(state.reports.counts);
+    renderReports();
+    renderAlerts();
+    setStatus('Reports updated.', 'success');
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+function clearReportFilters() {
+  $('reportProfile').value = '';
+  $('reportDevice').value = '';
+  $('reportFrom').value = '';
+  $('reportTo').value = '';
+  loadFilteredReports();
+}
+
+function reportQuery() {
+  const params = new URLSearchParams();
+  if ($('reportProfile').value) params.set('profileId', $('reportProfile').value);
+  if ($('reportDevice').value) params.set('deviceId', $('reportDevice').value);
+  if ($('reportFrom').value) params.set('dateFrom', $('reportFrom').value);
+  if ($('reportTo').value) params.set('dateTo', $('reportTo').value);
+  return params.toString();
+}
+
+async function exportReport(format) {
+  setStatus(`Preparing ${format.toUpperCase()}...`, '');
+  try {
+    const response = await fetch(`${settings.serverUrl}/reports/export.${format}?${reportQuery()}`, {
+      headers: { authorization: `Bearer ${settings.token}` }
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || `Server returned ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `safeharbor-report.${format}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setStatus(`${format.toUpperCase()} ready.`, 'success');
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+async function backupDatabase() {
+  setStatus('Preparing database backup...', '');
+  try {
+    await downloadAuthenticated('/backup/safeharbor.sqlite', 'safeharbor-backup.sqlite');
+    setStatus('Database backup ready.', 'success');
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+async function exportPolicy() {
+  setStatus('Exporting policy...', '');
+  try {
+    await downloadAuthenticated('/policy/export.json', 'safeharbor-policy.json');
+    setStatus('Policy export ready.', 'success');
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+async function importPolicy() {
+  const raw = prompt('Paste SafeHarbor policy JSON');
+  if (!raw) return;
+  setStatus('Importing policy...', '');
+  try {
+    const parsed = JSON.parse(raw);
+    await fetchJson('/policy/import', {
+      method: 'POST',
+      body: JSON.stringify(parsed.policy || parsed)
+    });
+    await loadDashboard();
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
+}
+
+async function downloadAuthenticated(path, fileName) {
+  const response = await fetch(`${settings.serverUrl}${path}`, {
+    headers: { authorization: `Bearer ${settings.token}` }
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `Server returned ${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 async function saveAlertPrefs() {
-  await chrome.storage.local.set({
+  const values = {
     alertBlocked: $('alertBlocked').checked,
     alertTamper: $('alertTamper').checked,
     alertOffline: $('alertOffline').checked
-  });
+  };
+  if (hasChromeApi) await chrome.storage.local.set(values);
+  else saveWebSettings(values);
   setStatus('Alert preferences saved.', 'success');
+}
+
+function openOptions() {
+  if (hasChromeApi && chrome.runtime && chrome.runtime.openOptionsPage) {
+    chrome.runtime.openOptionsPage();
+    return;
+  }
+  const token = prompt('SafeHarbor parent token', settings?.token || '');
+  if (token != null) {
+    saveWebSettings({ token, serverUrl: window.location.origin });
+    loadDashboard();
+  }
 }
 
 function normalizeDomain(value) {
@@ -332,6 +567,13 @@ function removeButton(onClick) {
   button.textContent = 'Remove';
   button.addEventListener('click', onClick);
   return button;
+}
+
+function option(value, text) {
+  const node = document.createElement('option');
+  node.value = value;
+  node.textContent = text;
+  return node;
 }
 
 function el(tag, text) {

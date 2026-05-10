@@ -52,9 +52,23 @@ h3 {
 .top-actions,
 .inline-form,
 .schedule-form,
-.override-form {
+.override-form,
+.filter-bar,
+.section-header {
   display: flex;
   gap: 8px;
+}
+
+.section-header {
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.filter-bar {
+  align-items: end;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
 }
 
 button,
@@ -162,9 +176,26 @@ label {
 }
 
 .tag button,
-.stack-item button {
+.stack-item button,
+.summary-row button {
   min-height: 30px;
   padding: 4px 8px;
+}
+
+.summary-row.revoked {
+  opacity: 0.68;
+}
+
+.alert-list {
+  margin-top: 12px;
+}
+
+.alert-high {
+  border-color: #d77c7c;
+}
+
+.alert-medium {
+  border-color: #d8b76a;
 }
 
 .check-row {
@@ -228,7 +259,8 @@ td {
   .top-actions,
   .inline-form,
   .schedule-form,
-  .override-form {
+  .override-form,
+  .section-header {
     align-items: stretch;
     flex-direction: column;
   }

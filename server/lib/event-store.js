@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 5;
 
 class EventStore {
   constructor(databaseFile) {
@@ -31,6 +31,9 @@ class EventStore {
         profile_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
         last_seen_at TEXT,
+        revoked_at TEXT,
+        revoked_reason TEXT,
+        last_sync_at TEXT,
         FOREIGN KEY (profile_id) REFERENCES profiles(id)
       );
 
@@ -58,6 +61,7 @@ class EventStore {
         reason TEXT,
         category TEXT,
         source TEXT,
+        event_key TEXT,
         metadata_json TEXT
       );
 
@@ -65,6 +69,27 @@ class EventStore {
       CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
       CREATE INDEX IF NOT EXISTS idx_events_domain ON events(domain);
       CREATE INDEX IF NOT EXISTS idx_events_decision ON events(decision);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_key ON events(event_key) WHERE event_key IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        alert_key TEXT NOT NULL UNIQUE,
+        type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        status TEXT NOT NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        profile_id TEXT,
+        device_id TEXT,
+        event_id INTEGER,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT,
+        delivered_at TEXT,
+        metadata_json TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_alerts_status ON alerts(status);
+      CREATE INDEX IF NOT EXISTS idx_alerts_created ON alerts(created_at DESC);
 
       CREATE TABLE IF NOT EXISTS enrollment_codes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,7 +105,21 @@ class EventStore {
 
       CREATE INDEX IF NOT EXISTS idx_enrollment_codes_expires ON enrollment_codes(expires_at DESC);
     `);
+    this.ensureColumn('devices', 'revoked_at', 'TEXT');
+    this.ensureColumn('devices', 'revoked_reason', 'TEXT');
+    this.ensureColumn('devices', 'last_sync_at', 'TEXT');
+    this.ensureColumn('events', 'event_key', 'TEXT');
+    this.ensureColumn('alerts', 'delivered_at', 'TEXT');
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_key ON events(event_key) WHERE event_key IS NOT NULL;');
     this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  }
+
+  ensureColumn(table, column, definition) {
+    const exists = this.db.prepare(`PRAGMA table_info(${table})`).all()
+      .some(row => row.name === column);
+    if (!exists) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   seed(defaults) {
@@ -130,42 +169,66 @@ class EventStore {
 
   getDevices() {
     return this.db.prepare(`
-      SELECT id, name, platform, profile_id AS profileId, created_at AS createdAt, last_seen_at AS lastSeenAt
+      SELECT
+        id, name, platform, profile_id AS profileId, created_at AS createdAt,
+        last_seen_at AS lastSeenAt, revoked_at AS revokedAt, revoked_reason AS revokedReason,
+        last_sync_at AS lastSyncAt
       FROM devices
       ORDER BY name
     `).all().map(device => ({
       ...device,
-      status: deviceStatus(device.lastSeenAt)
+      status: deviceStatus(device.lastSeenAt, device.revokedAt)
     }));
   }
 
   getDevice(deviceId) {
     const row = this.db.prepare(`
-      SELECT id, name, platform, profile_id AS profileId, created_at AS createdAt, last_seen_at AS lastSeenAt
+      SELECT
+        id, name, platform, profile_id AS profileId, created_at AS createdAt,
+        last_seen_at AS lastSeenAt, revoked_at AS revokedAt, revoked_reason AS revokedReason,
+        last_sync_at AS lastSyncAt
       FROM devices
       WHERE id = ?
     `).get(deviceId);
-    return row ? { ...row, status: deviceStatus(row.lastSeenAt) } : null;
+    return row ? { ...row, status: deviceStatus(row.lastSeenAt, row.revokedAt) } : null;
   }
 
-  upsertDevice(device) {
+  upsertDevice(device, options = {}) {
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO devices (id, name, platform, profile_id, created_at, last_seen_at)
-      VALUES (@id, @name, @platform, @profileId, @createdAt, @lastSeenAt)
+      INSERT INTO devices (
+        id, name, platform, profile_id, created_at, last_seen_at, revoked_at, revoked_reason, last_sync_at
+      )
+      VALUES (
+        @id, @name, @platform, @profileId, @createdAt, @lastSeenAt, NULL, NULL, @lastSyncAt
+      )
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         platform = excluded.platform,
         profile_id = excluded.profile_id,
-        last_seen_at = excluded.last_seen_at
+        last_seen_at = excluded.last_seen_at,
+        revoked_at = CASE WHEN @clearRevocation = 1 THEN NULL ELSE devices.revoked_at END,
+        revoked_reason = CASE WHEN @clearRevocation = 1 THEN NULL ELSE devices.revoked_reason END,
+        last_sync_at = COALESCE(@lastSyncAt, devices.last_sync_at)
     `).run({
       id: device.id,
       name: device.name,
       platform: device.platform,
       profileId: device.profileId,
       createdAt: device.createdAt || now,
-      lastSeenAt: device.lastSeenAt || now
+      lastSeenAt: device.lastSeenAt || now,
+      lastSyncAt: device.lastSyncAt || null,
+      clearRevocation: options.clearRevocation ? 1 : 0
     });
+  }
+
+  revokeDevice(deviceId, reason = 'Revoked by parent', timestamp = new Date().toISOString()) {
+    const result = this.db.prepare(`
+      UPDATE devices
+      SET revoked_at = ?, revoked_reason = ?
+      WHERE id = ?
+    `).run(timestamp, reason, deviceId);
+    return result.changes > 0 ? this.getDevice(deviceId) : null;
   }
 
   getPolicy(profileId) {
@@ -217,7 +280,11 @@ class EventStore {
   }
 
   touchDevice(deviceId, timestamp = new Date().toISOString()) {
-    this.db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(timestamp, deviceId);
+    this.db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ? AND revoked_at IS NULL').run(timestamp, deviceId);
+  }
+
+  markDeviceSynced(deviceId, timestamp = new Date().toISOString()) {
+    this.db.prepare('UPDATE devices SET last_sync_at = ? WHERE id = ? AND revoked_at IS NULL').run(timestamp, deviceId);
   }
 
   createEnrollmentCode(enrollment) {
@@ -263,16 +330,26 @@ class EventStore {
 
   recordEvent(event) {
     const timestamp = event.timestamp || new Date().toISOString();
-    this.db.prepare(`
-      INSERT INTO events (
+    const statement = event.eventKey ? `
+      INSERT OR IGNORE INTO events (
         type, timestamp, url, domain, title, profile_id, device_id, decision,
-        rule_id, reason, category, source, metadata_json
+        rule_id, reason, category, source, event_key, metadata_json
       )
       VALUES (
         @type, @timestamp, @url, @domain, @title, @profileId, @deviceId, @decision,
-        @ruleId, @reason, @category, @source, @metadataJson
+        @ruleId, @reason, @category, @source, @eventKey, @metadataJson
       )
-    `).run({
+    ` : `
+      INSERT INTO events (
+        type, timestamp, url, domain, title, profile_id, device_id, decision,
+        rule_id, reason, category, source, event_key, metadata_json
+      )
+      VALUES (
+        @type, @timestamp, @url, @domain, @title, @profileId, @deviceId, @decision,
+        @ruleId, @reason, @category, @source, @eventKey, @metadataJson
+      )
+    `;
+    const result = this.db.prepare(statement).run({
       type: event.type,
       timestamp,
       url: event.url || null,
@@ -285,11 +362,17 @@ class EventStore {
       reason: event.reason || null,
       category: event.category || null,
       source: event.source || null,
+      eventKey: event.eventKey || null,
       metadataJson: JSON.stringify(event.metadata || {})
     });
+    return {
+      inserted: result.changes > 0,
+      id: result.lastInsertRowid
+    };
   }
 
-  recentEvents(limit = 50) {
+  recentEvents(limit = 50, filters = {}) {
+    const filter = buildEventFilter(filters);
     return this.db.prepare(`
       SELECT
         id, type, timestamp, url, domain, title,
@@ -297,12 +380,59 @@ class EventStore {
         device_id AS deviceId,
         decision, rule_id AS ruleId, reason, category, source
       FROM events
+      ${filter.where}
       ORDER BY timestamp DESC, id DESC
       LIMIT ?
-    `).all(limit);
+    `).all(...filter.params, limit);
   }
 
-  reports() {
+  eventsAfterId(afterId = 0, limit = 100) {
+    return this.db.prepare(`
+      SELECT
+        id, type, timestamp, url, domain, title,
+        profile_id AS profileId,
+        device_id AS deviceId,
+        decision, rule_id AS ruleId, reason, category, source,
+        metadata_json AS metadataJson
+      FROM events
+      WHERE id > ?
+      ORDER BY id ASC
+      LIMIT ?
+    `).all(afterId, limit).map(row => ({
+      id: row.id,
+      type: row.type,
+      timestamp: row.timestamp,
+      url: row.url,
+      domain: row.domain,
+      title: row.title,
+      profileId: row.profileId,
+      deviceId: row.deviceId,
+      decision: row.decision,
+      ruleId: row.ruleId,
+      reason: row.reason,
+      category: row.category,
+      source: row.source,
+      metadata: parseMetadata(row.metadataJson)
+    }));
+  }
+
+  exportEvents(filters = {}, limit = 1000) {
+    const filter = buildEventFilter(filters);
+    return this.db.prepare(`
+      SELECT
+        id, type, timestamp, url, domain, title,
+        profile_id AS profileId,
+        device_id AS deviceId,
+        decision, rule_id AS ruleId, reason, category, source
+      FROM events
+      ${filter.where}
+      ORDER BY timestamp DESC, id DESC
+      LIMIT ?
+    `).all(...filter.params, limit);
+  }
+
+  reports(filters = {}) {
+    const filter = buildEventFilter(filters);
     const counts = this.db.prepare(`
       SELECT
         COUNT(*) AS totalEvents,
@@ -310,33 +440,37 @@ class EventStore {
         SUM(CASE WHEN decision = 'block' THEN 1 ELSE 0 END) AS blockedVisits,
         SUM(CASE WHEN type = 'tamper_signal' THEN 1 ELSE 0 END) AS tamperSignals
       FROM events
-    `).get();
+      ${filter.where}
+    `).get(...filter.params);
 
     const topDomains = this.db.prepare(`
       SELECT domain, COUNT(*) AS count
       FROM events
       WHERE domain IS NOT NULL AND domain != ''
+        ${filter.and}
       GROUP BY domain
       ORDER BY count DESC, domain ASC
       LIMIT 10
-    `).all();
+    `).all(...filter.params);
 
     const categoryCounts = this.db.prepare(`
       SELECT category, COUNT(*) AS count
       FROM events
       WHERE category IS NOT NULL AND category != ''
+        ${filter.and}
       GROUP BY category
       ORDER BY count DESC, category ASC
       LIMIT 10
-    `).all();
+    `).all(...filter.params);
 
     const blockedAttempts = this.db.prepare(`
-      SELECT timestamp, url, domain, title, rule_id AS ruleId, reason, category
+      SELECT timestamp, url, domain, title, rule_id AS ruleId, reason, category, device_id AS deviceId
       FROM events
       WHERE decision = 'block'
+        ${filter.and}
       ORDER BY timestamp DESC, id DESC
       LIMIT 25
-    `).all();
+    `).all(...filter.params);
 
     const dailySummary = this.db.prepare(`
       SELECT
@@ -346,10 +480,11 @@ class EventStore {
         SUM(CASE WHEN decision = 'block' THEN 1 ELSE 0 END) AS blocked
       FROM events
       WHERE timestamp >= datetime('now', '-14 days')
+        ${filter.and}
       GROUP BY day
       ORDER BY day DESC
       LIMIT 14
-    `).all().map(row => ({
+    `).all(...filter.params).map(row => ({
       day: row.day,
       total: row.total || 0,
       allowed: row.allowed || 0,
@@ -360,27 +495,86 @@ class EventStore {
       SELECT timestamp, type, reason, source
       FROM events
       WHERE type = 'tamper_signal'
+        ${filter.and}
       ORDER BY timestamp DESC, id DESC
       LIMIT 10
-    `).all();
+    `).all(...filter.params);
 
     const onlineEstimate = this.db.prepare(`
       SELECT COUNT(DISTINCT substr(timestamp, 1, 16)) AS activeMinutes
       FROM events
       WHERE type = 'visit_decision'
         AND timestamp >= datetime('now', '-7 days')
-    `).get();
+        ${filter.and}
+    `).get(...filter.params);
 
     const scheduleViolations = this.db.prepare(`
       SELECT COUNT(*) AS count
       FROM events
       WHERE decision = 'block'
+        ${filter.and}
         AND (
           rule_id LIKE '%schedule%'
           OR reason LIKE '%schedule%'
           OR reason LIKE '%Scheduled%'
         )
-    `).get();
+    `).get(...filter.params);
+
+    const deviceSummary = this.db.prepare(`
+      SELECT
+        COALESCE(devices.id, events.device_id, 'unknown') AS deviceId,
+        COALESCE(devices.name, events.device_id, 'Unknown Device') AS name,
+        COALESCE(devices.platform, 'unknown') AS platform,
+        COALESCE(devices.profile_id, events.profile_id, '') AS profileId,
+        devices.last_seen_at AS lastSeenAt,
+        devices.revoked_at AS revokedAt,
+        COUNT(events.id) AS total,
+        SUM(CASE WHEN events.decision = 'allow' THEN 1 ELSE 0 END) AS allowed,
+        SUM(CASE WHEN events.decision = 'block' THEN 1 ELSE 0 END) AS blocked,
+        SUM(CASE WHEN events.type = 'tamper_signal' THEN 1 ELSE 0 END) AS tamperSignals
+      FROM events
+      LEFT JOIN devices ON devices.id = events.device_id
+      WHERE events.device_id IS NOT NULL AND events.device_id != ''
+        ${filter.and}
+      GROUP BY deviceId
+      ORDER BY total DESC, name ASC
+      LIMIT 25
+    `).all(...filter.params).map(row => ({
+      deviceId: row.deviceId,
+      name: row.name,
+      platform: row.platform,
+      profileId: row.profileId,
+      lastSeenAt: row.lastSeenAt,
+      status: deviceStatus(row.lastSeenAt, row.revokedAt),
+      total: row.total || 0,
+      allowed: row.allowed || 0,
+      blocked: row.blocked || 0,
+      tamperSignals: row.tamperSignals || 0
+    }));
+
+    const profileSummary = this.db.prepare(`
+      SELECT
+        COALESCE(profiles.id, events.profile_id, 'unknown') AS profileId,
+        COALESCE(profiles.name, events.profile_id, 'Unknown Profile') AS name,
+        COUNT(events.id) AS total,
+        SUM(CASE WHEN events.decision = 'allow' THEN 1 ELSE 0 END) AS allowed,
+        SUM(CASE WHEN events.decision = 'block' THEN 1 ELSE 0 END) AS blocked,
+        SUM(CASE WHEN events.type = 'tamper_signal' THEN 1 ELSE 0 END) AS tamperSignals
+      FROM events
+      LEFT JOIN profiles ON profiles.id = events.profile_id
+      WHERE events.profile_id IS NOT NULL AND events.profile_id != ''
+        ${filter.and}
+      GROUP BY profileId
+      ORDER BY total DESC, name ASC
+      LIMIT 25
+    `).all(...filter.params).map(row => ({
+      profileId: row.profileId,
+      name: row.name,
+      total: row.total || 0,
+      allowed: row.allowed || 0,
+      blocked: row.blocked || 0,
+      tamperSignals: row.tamperSignals || 0
+    }));
 
     return {
       counts: {
@@ -389,14 +583,185 @@ class EventStore {
         blockedVisits: counts.blockedVisits || 0,
         tamperSignals: counts.tamperSignals || 0,
         estimatedOnlineMinutes7d: onlineEstimate.activeMinutes || 0,
-        scheduleViolations: scheduleViolations.count || 0
+        scheduleViolations: scheduleViolations.count || 0,
+        openAlerts: this.alerts(1, false).totalOpen
       },
       topDomains,
       categoryCounts,
       blockedAttempts,
       dailySummary,
-      recentTamperSignals
+      recentTamperSignals,
+      deviceSummary,
+      profileSummary
     };
+  }
+
+  generateAlerts(timestamp = new Date().toISOString()) {
+    const recentBlocks = this.db.prepare(`
+      SELECT device_id AS deviceId, profile_id AS profileId, domain, COUNT(*) AS count, MAX(id) AS eventId
+      FROM events
+      WHERE decision = 'block'
+        AND timestamp >= datetime('now', '-24 hours')
+        AND device_id IS NOT NULL
+      GROUP BY device_id, domain
+      HAVING count >= 3
+    `).all();
+
+    for (const row of recentBlocks) {
+      this.upsertAlert({
+        alertKey: `repeated-block:${row.deviceId}:${row.domain}`,
+        type: 'repeated_block',
+        severity: 'medium',
+        title: 'Repeated blocked attempts',
+        message: `${row.domain} was blocked ${row.count} times in the last 24 hours.`,
+        profileId: row.profileId,
+        deviceId: row.deviceId,
+        eventId: row.eventId,
+        createdAt: timestamp,
+        metadata: { domain: row.domain, count: row.count }
+      });
+    }
+
+    const scheduleBlocks = this.db.prepare(`
+      SELECT device_id AS deviceId, profile_id AS profileId, COUNT(*) AS count, MAX(id) AS eventId
+      FROM events
+      WHERE decision = 'block'
+        AND timestamp >= datetime('now', '-24 hours')
+        AND device_id IS NOT NULL
+        AND (
+          rule_id LIKE '%schedule%'
+          OR reason LIKE '%schedule%'
+          OR reason LIKE '%Scheduled%'
+        )
+      GROUP BY device_id
+      HAVING count >= 1
+    `).all();
+
+    for (const row of scheduleBlocks) {
+      this.upsertAlert({
+        alertKey: `schedule:${row.deviceId}`,
+        type: 'schedule_violation',
+        severity: 'medium',
+        title: 'Schedule violation',
+        message: `${row.count} schedule-blocked attempt${row.count === 1 ? '' : 's'} in the last 24 hours.`,
+        profileId: row.profileId,
+        deviceId: row.deviceId,
+        eventId: row.eventId,
+        createdAt: timestamp,
+        metadata: { count: row.count }
+      });
+    }
+
+    const tamperSignals = this.db.prepare(`
+      SELECT id, profile_id AS profileId, device_id AS deviceId, reason, timestamp
+      FROM events
+      WHERE type = 'tamper_signal'
+      ORDER BY id DESC
+      LIMIT 25
+    `).all();
+
+    for (const row of tamperSignals) {
+      this.upsertAlert({
+        alertKey: `tamper:${row.id}`,
+        type: 'tamper_signal',
+        severity: 'high',
+        title: 'Tamper signal',
+        message: row.reason || 'SafeHarbor received a tamper signal.',
+        profileId: row.profileId,
+        deviceId: row.deviceId,
+        eventId: row.id,
+        createdAt: row.timestamp || timestamp,
+        metadata: {}
+      });
+    }
+
+    const offlineDevices = this.getDevices().filter(device => device.status === 'offline' && !device.revokedAt);
+    for (const device of offlineDevices) {
+      this.upsertAlert({
+        alertKey: `offline:${device.id}`,
+        type: 'device_offline',
+        severity: 'medium',
+        title: 'Device offline',
+        message: `${device.name} has not checked in recently.`,
+        profileId: device.profileId,
+        deviceId: device.id,
+        createdAt: timestamp,
+        metadata: { lastSeenAt: device.lastSeenAt }
+      });
+    }
+  }
+
+  upsertAlert(alert) {
+    this.db.prepare(`
+      INSERT INTO alerts (
+        alert_key, type, severity, status, title, message, profile_id, device_id,
+        event_id, created_at, metadata_json
+      )
+      VALUES (
+        @alertKey, @type, @severity, 'open', @title, @message, @profileId, @deviceId,
+        @eventId, @createdAt, @metadataJson
+      )
+      ON CONFLICT(alert_key) DO UPDATE SET
+        severity = excluded.severity,
+        title = excluded.title,
+        message = excluded.message,
+        metadata_json = excluded.metadata_json
+      WHERE alerts.status = 'open'
+    `).run({
+      alertKey: alert.alertKey,
+      type: alert.type,
+      severity: alert.severity,
+      title: alert.title,
+      message: alert.message,
+      profileId: alert.profileId || null,
+      deviceId: alert.deviceId || null,
+      eventId: alert.eventId || null,
+      createdAt: alert.createdAt,
+      metadataJson: JSON.stringify(alert.metadata || {})
+    });
+  }
+
+  alerts(limit = 25, includeResolved = false) {
+    const rows = this.db.prepare(`
+      SELECT
+        id, alert_key AS alertKey, type, severity, status, title, message,
+        profile_id AS profileId, device_id AS deviceId, event_id AS eventId,
+        created_at AS createdAt, resolved_at AS resolvedAt, delivered_at AS deliveredAt,
+        metadata_json AS metadataJson
+      FROM alerts
+      ${includeResolved ? '' : "WHERE status = 'open'"}
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    `).all(limit).map(row => ({
+      ...row,
+      metadata: parseMetadata(row.metadataJson),
+      metadataJson: undefined
+    }));
+    const totalOpen = this.db.prepare("SELECT COUNT(*) AS count FROM alerts WHERE status = 'open'").get().count || 0;
+    return { rows, totalOpen };
+  }
+
+  resolveAlert(alertId, timestamp = new Date().toISOString()) {
+    const result = this.db.prepare(`
+      UPDATE alerts
+      SET status = 'resolved', resolved_at = ?
+      WHERE id = ? AND status = 'open'
+    `).run(timestamp, alertId);
+    return result.changes > 0;
+  }
+
+  markAlertDelivered(alertId, timestamp = new Date().toISOString()) {
+    const result = this.db.prepare(`
+      UPDATE alerts
+      SET delivered_at = ?
+      WHERE id = ? AND delivered_at IS NULL
+    `).run(timestamp, alertId);
+    return result.changes > 0;
+  }
+
+  backupTo(filePath) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    return this.db.backup(filePath);
   }
 
   close() {
@@ -404,13 +769,48 @@ class EventStore {
   }
 }
 
-function deviceStatus(lastSeenAt) {
+function deviceStatus(lastSeenAt, revokedAt = null) {
+  if (revokedAt) return 'revoked';
   if (!lastSeenAt) return 'never_seen';
   const ageMs = Date.now() - new Date(lastSeenAt).getTime();
   if (Number.isNaN(ageMs)) return 'unknown';
   if (ageMs <= 2 * 60 * 1000) return 'online';
   if (ageMs <= 30 * 60 * 1000) return 'recent';
   return 'offline';
+}
+
+function parseMetadata(value) {
+  try {
+    return value ? JSON.parse(value) : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildEventFilter(filters = {}) {
+  const clauses = [];
+  const params = [];
+  if (filters.deviceId) {
+    clauses.push('events.device_id = ?');
+    params.push(filters.deviceId);
+  }
+  if (filters.profileId) {
+    clauses.push('events.profile_id = ?');
+    params.push(filters.profileId);
+  }
+  if (filters.dateFrom) {
+    clauses.push('events.timestamp >= ?');
+    params.push(filters.dateFrom);
+  }
+  if (filters.dateTo) {
+    clauses.push('events.timestamp <= ?');
+    params.push(filters.dateTo);
+  }
+  return {
+    where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '',
+    and: clauses.length ? `AND ${clauses.join(' AND ')}` : '',
+    params
+  };
 }
 
 module.exports = {
