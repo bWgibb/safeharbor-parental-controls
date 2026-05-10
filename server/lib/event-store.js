@@ -240,16 +240,64 @@ class EventStore {
       LIMIT 25
     `).all();
 
+    const dailySummary = this.db.prepare(`
+      SELECT
+        substr(timestamp, 1, 10) AS day,
+        COUNT(*) AS total,
+        SUM(CASE WHEN decision = 'allow' THEN 1 ELSE 0 END) AS allowed,
+        SUM(CASE WHEN decision = 'block' THEN 1 ELSE 0 END) AS blocked
+      FROM events
+      WHERE timestamp >= datetime('now', '-14 days')
+      GROUP BY day
+      ORDER BY day DESC
+      LIMIT 14
+    `).all().map(row => ({
+      day: row.day,
+      total: row.total || 0,
+      allowed: row.allowed || 0,
+      blocked: row.blocked || 0
+    }));
+
+    const recentTamperSignals = this.db.prepare(`
+      SELECT timestamp, type, reason, source
+      FROM events
+      WHERE type = 'tamper_signal'
+      ORDER BY timestamp DESC, id DESC
+      LIMIT 10
+    `).all();
+
+    const onlineEstimate = this.db.prepare(`
+      SELECT COUNT(DISTINCT substr(timestamp, 1, 16)) AS activeMinutes
+      FROM events
+      WHERE type = 'visit_decision'
+        AND timestamp >= datetime('now', '-7 days')
+    `).get();
+
+    const scheduleViolations = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM events
+      WHERE decision = 'block'
+        AND (
+          rule_id LIKE '%schedule%'
+          OR reason LIKE '%schedule%'
+          OR reason LIKE '%Scheduled%'
+        )
+    `).get();
+
     return {
       counts: {
         totalEvents: counts.totalEvents || 0,
         allowedVisits: counts.allowedVisits || 0,
         blockedVisits: counts.blockedVisits || 0,
-        tamperSignals: counts.tamperSignals || 0
+        tamperSignals: counts.tamperSignals || 0,
+        estimatedOnlineMinutes7d: onlineEstimate.activeMinutes || 0,
+        scheduleViolations: scheduleViolations.count || 0
       },
       topDomains,
       categoryCounts,
-      blockedAttempts
+      blockedAttempts,
+      dailySummary,
+      recentTamperSignals
     };
   }
 

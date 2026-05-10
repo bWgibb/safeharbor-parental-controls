@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeHarbor Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <main>
+    <header class="topbar">
+      <div>
+        <h1>SafeHarbor</h1>
+        <p id="subtitle"></p>
+      </div>
+      <div class="top-actions">
+        <button id="refresh" type="button">Refresh</button>
+        <button id="options" type="button">Options</button>
+      </div>
+    </header>
+
+    <section id="metrics" class="metrics"></section>
+
+    <section class="layout">
+      <div class="panel">
+        <h2>Family</h2>
+        <div id="profiles"></div>
+        <div id="devices"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Policy</h2>
+        <label>
+          Default
+          <select id="defaultAction">
+            <option value="allow">Allow</option>
+            <option value="block">Block</option>
+          </select>
+        </label>
+
+        <h3>Allow List</h3>
+        <form id="allowForm" class="inline-form">
+          <input id="allowDomain" type="text" placeholder="domain.com" autocomplete="off">
+          <button type="submit">Add</button>
+        </form>
+        <div id="allowList" class="tag-list"></div>
+
+        <h3>Block List</h3>
+        <form id="blockForm" class="inline-form">
+          <input id="blockDomain" type="text" placeholder="domain.com" autocomplete="off">
+          <button type="submit">Add</button>
+        </form>
+        <div id="blockList" class="tag-list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Categories</h2>
+        <div id="categoryList" class="check-list"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Schedules</h2>
+        <form id="scheduleForm" class="schedule-form">
+          <select id="scheduleAction">
+            <option value="block">Block</option>
+            <option value="allow">Allow</option>
+          </select>
+          <input id="scheduleStart" type="time" value="22:00">
+          <input id="scheduleEnd" type="time" value="06:00">
+          <input id="scheduleReason" type="text" placeholder="reason" autocomplete="off">
+          <button type="submit">Add</button>
+        </form>
+        <div id="scheduleList" class="stack"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Temporary Overrides</h2>
+        <form id="overrideForm" class="override-form">
+          <select id="overrideAction">
+            <option value="allow">Allow</option>
+            <option value="block">Block</option>
+          </select>
+          <input id="overrideDomain" type="text" placeholder="domain.com" autocomplete="off">
+          <input id="overrideMinutes" type="number" min="5" step="5" value="60">
+          <button type="submit">Add</button>
+        </form>
+        <div id="overrideList" class="stack"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Alerts</h2>
+        <label class="check-row">
+          <input id="alertBlocked" type="checkbox">
+          Blocked attempts
+        </label>
+        <label class="check-row">
+          <input id="alertTamper" type="checkbox">
+          Tamper signals
+        </label>
+        <label class="check-row">
+          <input id="alertOffline" type="checkbox">
+          Agent offline
+        </label>
+      </div>
+    </section>
+
+    <section class="panel full">
+      <h2>Reports</h2>
+      <div class="report-grid">
+        <div>
+          <h3>Blocked Attempts</h3>
+          <table>
+            <thead><tr><th>Time</th><th>Reason</th><th>URL</th></tr></thead>
+            <tbody id="blockedAttempts"></tbody>
+          </table>
+        </div>
+        <div>
+          <h3>Top Domains</h3>
+          <table>
+            <thead><tr><th>Domain</th><th>Events</th></tr></thead>
+            <tbody id="topDomains"></tbody>
+          </table>
+        </div>
+        <div>
+          <h3>Daily Summary</h3>
+          <table>
+            <thead><tr><th>Day</th><th>Total</th><th>Blocked</th></tr></thead>
+            <tbody id="dailySummary"></tbody>
+          </table>
+        </div>
+        <div>
+          <h3>Recent Activity</h3>
+          <table>
+            <thead><tr><th>Time</th><th>Decision</th><th>Domain</th></tr></thead>
+            <tbody id="recentActivity"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <p id="status" role="status"></p>
+  </main>
+  <script src="dashboard.js"></script>
+</body>
+</html>

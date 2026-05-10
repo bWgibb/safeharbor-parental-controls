@@ -21,6 +21,7 @@ This document captures the phase 1 product foundation so future implementation w
 - Browser enforcement first: Chrome is the first target, with Edge and Firefox later.
 - Cloud API later: sync policies down and activity up after local policy enforcement is useful.
 - Parent dashboard: build as a responsive web app that works well on mobile before considering native mobile apps.
+- Local dashboard first: the extension-hosted dashboard is the current parent interface until cloud accounts and sync exist.
 - Native helper later: add stronger service installation, watchdog, and tamper detection after the policy model is stable.
 
 ## Phase 1 Decisions

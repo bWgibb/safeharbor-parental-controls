@@ -1,6 +1,6 @@
 # SafeHarbor
 
-SafeHarbor is a local parental-controls MVP. It includes a Chrome extension, a localhost Node.js agent, a SQLite activity store, child/profile policy defaults, URL policy evaluation, browser blocking, local reporting, and optional Markdown debug/export captures.
+SafeHarbor is a local parental-controls MVP. It includes a Chrome extension, a localhost Node.js agent, a SQLite activity store, child/profile policy defaults, URL policy evaluation, browser blocking, a parent dashboard, local reporting, and optional Markdown debug/export captures.
 
 The broader product roadmap is tracked in [ROADMAP.md](ROADMAP.md).
 
@@ -39,6 +39,8 @@ This repository now has a local controls MVP, not a finished parental-controls p
    - Token: the value from `npm run token`
 
 6. Click the extension button and use **Send current page**.
+
+7. Click **Dashboard** in the extension popup to open the local parent dashboard.
 
 The default local policy blocks `example.com`, so you can test-drive blocking by visiting:
 
@@ -130,6 +132,19 @@ Authorization: Bearer <local-token>
 - Activity/events are stored in SQLite for reporting and policy history.
 - Full page text is not stored by default.
 - A local admin can still disable or remove consumer controls. Stronger tamper resistance remains future work.
+
+## Parent Dashboard
+
+The extension dashboard can:
+
+- Show child profile and local device status.
+- Show total, allowed, blocked, estimated online minutes, and tamper counts.
+- Edit the local default allow/block mode.
+- Add and remove allow-list and block-list domains.
+- Toggle blocked categories.
+- Add schedules and temporary overrides.
+- Save local alert preferences.
+- Review blocked attempts, top domains, daily summaries, and recent activity.
 
 ## Testing
 

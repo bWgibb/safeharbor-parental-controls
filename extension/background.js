@@ -34,6 +34,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === 'open-dashboard-page') {
+    openDashboardPage()
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   return false;
 });
 
@@ -214,6 +221,11 @@ async function checkHealth() {
 
 async function openStatusPage() {
   await chrome.tabs.create({ url: chrome.runtime.getURL('status.html') });
+  return { ok: true };
+}
+
+async function openDashboardPage() {
+  await chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html') });
   return { ok: true };
 }
 

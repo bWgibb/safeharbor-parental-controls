@@ -2,6 +2,7 @@
 
 const sendButton = document.getElementById('send');
 const healthButton = document.getElementById('health');
+const dashboardButton = document.getElementById('dashboardPage');
 const statusButton = document.getElementById('statusPage');
 const optionsButton = document.getElementById('options');
 const readableInput = document.getElementById('readable');
@@ -31,6 +32,14 @@ statusButton.addEventListener('click', async () => {
     const result = await chrome.runtime.sendMessage({ type: 'open-status-page' });
     if (!result || !result.ok) throw new Error(result?.error || 'Could not open status page.');
     setStatus('Status page opened.', 'success');
+  });
+});
+
+dashboardButton.addEventListener('click', async () => {
+  await runWithStatus(dashboardButton, 'Opening...', async () => {
+    const result = await chrome.runtime.sendMessage({ type: 'open-dashboard-page' });
+    if (!result || !result.ok) throw new Error(result?.error || 'Could not open dashboard.');
+    setStatus('Dashboard opened.', 'success');
   });
 });
 

@@ -60,7 +60,13 @@ button:disabled {
 .row {
   display: grid;
   gap: 8px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.row button {
+  font-size: 12px;
+  padding-left: 6px;
+  padding-right: 6px;
 }
 
 .check {

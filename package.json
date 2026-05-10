@@ -8,7 +8,7 @@
     "start": "node server/safeharbor-server.js",
     "token": "node server/safeharbor-server.js --show-token",
     "config": "node server/safeharbor-server.js --print-config",
-    "check": "node --check server/safeharbor-server.js && node --check server/lib/defaults.js && node --check server/lib/event-store.js && node --check server/lib/policy-engine.js && node --check extension/background.js && node --check extension/block.js && node --check extension/popup.js && node --check extension/options.js && node --check extension/status.js",
+    "check": "node --check server/safeharbor-server.js && node --check server/lib/defaults.js && node --check server/lib/event-store.js && node --check server/lib/policy-engine.js && node --check extension/background.js && node --check extension/block.js && node --check extension/dashboard.js && node --check extension/popup.js && node --check extension/options.js && node --check extension/status.js",
     "test": "node --test"
   },
   "engines": {

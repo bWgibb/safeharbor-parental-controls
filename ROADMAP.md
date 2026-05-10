@@ -89,11 +89,14 @@ Done:
 
 ## Phase 3: Parent Dashboard
 
-- Build a mobile-friendly parent dashboard.
-- Include child profile lists, device status, recent activity, blocked attempts, rules editor, schedules editor, alert preferences, and temporary allow/deny actions.
-- Add reporting: daily and weekly summaries, top domains, blocked categories, estimated online time, attempts outside schedule, exportable reports, and privacy controls for stored browsing detail.
-- Add alerts by email first, then push notifications later.
-- Alert on blocked attempts, tamper signals, offline agents, repeated risky searches/domains, and schedule violations.
+Status: local dashboard MVP completed. Cloud-backed alert delivery remains future work.
+
+- [x] Build a mobile-friendly parent dashboard.
+- [x] Include child profile lists, device status, recent activity, blocked attempts, rules editor, schedules editor, alert preferences, and temporary allow/deny actions.
+- [x] Add local reporting: daily summaries, top domains, blocked categories, estimated online time, schedule-violation counts, and privacy-preserving browsing detail.
+- [ ] Add exportable reports.
+- [ ] Add alerts by email first, then push notifications later.
+- [ ] Alert on blocked attempts, tamper signals, offline agents, repeated risky searches/domains, and schedule violations.
 
 ## Phase 4: Accounts, Sync, and Deployment
 
