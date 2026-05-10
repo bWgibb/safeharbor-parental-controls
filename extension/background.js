@@ -190,6 +190,25 @@ async function checkHealth() {
   const response = await fetch(`${settings.serverUrl}/health`);
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !body.ok) throw new Error(body.error || `Server returned ${response.status}`);
+  if (body.app !== 'SafeHarbor') {
+    throw new Error(`Wrong server at ${settings.serverUrl}: ${body.app || 'unknown app'}. Use the SafeHarbor server URL.`);
+  }
+  if (!body.database) {
+    throw new Error(`SafeHarbor server at ${settings.serverUrl} is missing Phase 2 policy storage.`);
+  }
+
+  if (settings.token) {
+    const policyResponse = await fetch(`${settings.serverUrl}/policy`, {
+      headers: {
+        authorization: `Bearer ${settings.token}`
+      }
+    });
+    const policyBody = await policyResponse.json().catch(() => ({}));
+    if (!policyResponse.ok || !policyBody.ok) {
+      throw new Error(policyBody.error || `Policy check returned ${policyResponse.status}`);
+    }
+    body.policy = policyBody.policy;
+  }
   return { ok: true, body };
 }
 

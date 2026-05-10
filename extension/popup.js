@@ -22,7 +22,7 @@ healthButton.addEventListener('click', async () => {
   await runWithStatus(healthButton, 'Checking...', async () => {
     const result = await chrome.runtime.sendMessage({ type: 'check-health' });
     if (!result || !result.ok) throw new Error(result?.error || 'Health check failed.');
-    setStatus(`Server OK on port ${result.body.port}`, 'success');
+    setStatus(`SafeHarbor OK on port ${result.body.port}`, 'success');
   });
 });
 
