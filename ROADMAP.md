@@ -1,6 +1,6 @@
 # SafeHarbor Roadmap
 
-SafeHarbor is currently an early functional prototype: a Chrome extension talks to a localhost Node.js server, authenticates with a local token, and writes browser captures to local Markdown files. The core parental-controls product still needs policy enforcement, accounts, parent dashboards, reporting, sync, alerts, and stronger tamper resistance.
+SafeHarbor is currently an early functional prototype: a Chrome extension talks to a localhost Node.js server, authenticates with a local token, and writes browser captures to local Markdown files. The next storage target is SQLite for structured local activity/events, with Markdown kept only for optional debug or export captures. The core parental-controls product still needs policy enforcement, accounts, parent dashboards, reporting, sync, alerts, and stronger tamper resistance.
 
 ## Phase 1: Product Foundation
 
@@ -25,6 +25,9 @@ Status: completed in the initial foundation pass. See [docs/FOUNDATION.md](docs/
 - Show a SafeHarbor block page with the rule reason and parent-approved override flow.
 - Log blocked and allowed visits.
 - Capture page metadata without storing excessive private content by default.
+- Replace Markdown-first capture storage with a local SQLite event store for visits, blocks, policy decisions, override requests, tamper signals, device status, timestamps, domains, categories, and child profile IDs.
+- Keep Markdown output only as an optional debug/export path for manually triggered page or selection snapshots.
+- Avoid storing full page text by default. Store metadata and rule decisions unless a feature explicitly needs content.
 - Harden the local server with better extension-to-server auth, token rotation, config validation, structured logs, crash recovery, health checks, and automatic startup on Windows/macOS.
 
 ## Phase 3: Parent Dashboard
@@ -61,11 +64,12 @@ Status: completed in the initial foundation pass. See [docs/FOUNDATION.md](docs/
 
 1. Rename to SafeHarbor.
 2. Add this roadmap.
-3. Build the rule engine locally.
-4. Add real blocking in the extension.
-5. Add child profiles and policies.
-6. Add local reporting.
-7. Add the cloud API and parent dashboard.
-8. Add enrollment and sync.
-9. Add alerts.
-10. Harden tamper detection and deployment.
+3. Add a local SQLite event store.
+4. Build the rule engine locally.
+5. Add real blocking in the extension.
+6. Add child profiles and policies.
+7. Add local reporting from SQLite.
+8. Add the cloud API and parent dashboard.
+9. Add enrollment and sync.
+10. Add alerts.
+11. Harden tamper detection and deployment.

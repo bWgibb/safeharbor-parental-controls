@@ -1,6 +1,6 @@
 # SafeHarbor
 
-SafeHarbor is an early parental-controls prototype. Today it includes a Chrome extension and a localhost Node.js server that authenticate with a local token, receive browser page or selection captures, and write timestamped Markdown files locally.
+SafeHarbor is an early parental-controls prototype. Today it includes a Chrome extension and a localhost Node.js server that authenticate with a local token, receive browser page or selection captures, and write timestamped Markdown files locally. The planned local activity store is SQLite, with Markdown retained only for optional debug/export captures.
 
 The broader product roadmap is tracked in [ROADMAP.md](ROADMAP.md).
 
@@ -103,5 +103,5 @@ Authorization: Bearer <local-token>
 - Server listens on `127.0.0.1` only.
 - Page content is sent only after a user clicks the extension.
 - Extension stores only the local server token.
-- Captures are local Markdown files unless later integration code is added.
+- Captures are local Markdown files in the current prototype. The roadmap moves activity/events to SQLite for reporting and policy history.
 - No real browser blocking, parent dashboard, account system, cloud sync, or tamper resistance exists yet.
