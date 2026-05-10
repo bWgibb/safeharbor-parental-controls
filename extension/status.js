@@ -1,6 +1,18 @@
 'use strict';
 
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:43718';
+const REGINA_TIME_ZONE = 'America/Regina';
+const REGINA_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: REGINA_TIME_ZONE,
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: true,
+  timeZoneName: 'shortOffset'
+});
 
 const refreshButton = document.getElementById('refresh');
 const summaryEl = document.getElementById('summary');
@@ -34,7 +46,7 @@ async function loadStatus() {
     renderMetrics(body.reports?.counts || {});
     renderActivity(body.recentActivity || []);
     renderTopDomains(body.reports?.topDomains || []);
-    setStatus(`Updated ${new Date().toLocaleTimeString()}.`, '');
+    setStatus(`Updated ${formatReginaTime(new Date().toISOString())}.`, '');
   } catch (error) {
     setStatus(error.message, 'error');
   }
@@ -95,7 +107,7 @@ function renderActivity(items) {
   for (const item of items) {
     const row = document.createElement('tr');
     row.append(
-      td(item.timestamp),
+      td(formatReginaTime(item.timestamp)),
       td(item.type),
       td(item.decision),
       td(item.reason),
@@ -104,6 +116,14 @@ function renderActivity(items) {
     );
     activityEl.append(row);
   }
+}
+
+function formatReginaTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '';
+  return REGINA_TIME_FORMAT.format(date)
+    .replace('GMT-06:00', 'GMT-6')
+    .replace('GMT-06', 'GMT-6');
 }
 
 function td(value) {

@@ -17,6 +17,17 @@ const DEFAULT_PORT = 43718;
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RECENT_ACTIVITY = 50;
+const REGINA_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Regina',
+  year: 'numeric',
+  month: 'short',
+  day: '2-digit',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: true,
+  timeZoneName: 'shortOffset'
+});
 
 const args = new Set(process.argv.slice(2));
 const baseDir = process.env.SAFEHARBOR_HOME
@@ -108,6 +119,14 @@ if (args.has('--print-config')) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function formatReginaTime(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return '';
+  return REGINA_TIME_FORMAT.format(date)
+    .replace('GMT-06:00', 'GMT-6')
+    .replace('GMT-06', 'GMT-6');
 }
 
 function configBody() {
@@ -339,7 +358,7 @@ function statusBody() {
 function statusHtml(body) {
   const rows = body.recentActivity.map(item => {
     const url = item.url ? `<a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>` : '';
-    return `<tr><td>${escapeHtml(item.timestamp)}</td><td>${escapeHtml(item.type || '')}</td><td>${escapeHtml(item.decision || '')}</td><td>${escapeHtml(item.reason || '')}</td><td>${url}</td></tr>`;
+    return `<tr><td>${escapeHtml(formatReginaTime(item.timestamp))}</td><td>${escapeHtml(item.type || '')}</td><td>${escapeHtml(item.decision || '')}</td><td>${escapeHtml(item.reason || '')}</td><td>${url}</td></tr>`;
   }).join('');
 
   const counts = body.reports.counts;
@@ -372,7 +391,7 @@ function statusHtml(body) {
   </div>
   <h2>Recent Activity</h2>
   <table>
-    <thead><tr><th>Time</th><th>Type</th><th>Decision</th><th>Reason</th><th>URL</th></tr></thead>
+    <thead><tr><th>Time (America/Regina)</th><th>Type</th><th>Decision</th><th>Reason</th><th>URL</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="5">No events yet.</td></tr>'}</tbody>
   </table>
 </body>
