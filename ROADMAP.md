@@ -100,9 +100,13 @@ Status: local dashboard MVP completed. Cloud-backed alert delivery remains futur
 
 ## Phase 4: Accounts, Sync, and Deployment
 
-- Add parent account auth with secure sessions, password reset, optional MFA, and support for multiple parents or guardians.
-- Add device enrollment with pairing codes, device names, child assignment, last-seen status, revocation, and re-enrollment handling.
-- Add cloud sync so agents pull policies, upload activity/events, cache while offline, handle conflicts, and apply versioned policy updates.
+- Status: local enrollment/sync foundation completed. Hosted accounts and cloud sync remain future work.
+
+- [ ] Add parent account auth with secure sessions, password reset, optional MFA, and support for multiple parents or guardians.
+- [x] Add local device enrollment with pairing codes, device names, child assignment, and last-seen status.
+- [ ] Add device revocation and re-enrollment handling.
+- [x] Add local sync endpoints so agents can pull policies and upload activity/events.
+- [ ] Add cloud sync so agents pull policies, upload activity/events, cache while offline, handle conflicts, and apply versioned policy updates.
 - Treat Windows as the release validation platform for installation, startup, filesystem permissions, Edge deployment, child-account behavior, and tamper-resistance flows.
 - Support macOS as the fast development loop for server, extension, SQLite, rule-engine, dashboard, API, and reporting work.
 - Add GitHub Actions Windows jobs for Node checks, tests, PowerShell syntax/script validation, packaging checks, and installer smoke tests where possible.

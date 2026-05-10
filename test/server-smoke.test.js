@@ -36,6 +36,31 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
     assert.equal(status.ok, true);
     assert.equal(status.reports.counts.blockedVisits, 1);
     assert.ok(status.databaseFile.endsWith('safeharbor.sqlite'));
+
+    const enrollmentCode = await postJson(`${baseUrl}/enrollment/code`, config.token, {
+      profileId: 'default-child'
+    });
+    assert.match(enrollmentCode.code, /^\d{6}$/);
+
+    const enrolled = await postJsonWithoutToken(`${baseUrl}/devices/enroll`, {
+      code: enrollmentCode.code,
+      deviceId: 'windows-test-device',
+      name: 'Windows Test Device',
+      platform: 'win32'
+    });
+    assert.equal(enrolled.device.id, 'windows-test-device');
+    assert.equal(enrolled.device.profileId, 'default-child');
+
+    const syncPolicy = await getJson(`${baseUrl}/sync/policy?deviceId=windows-test-device`, config.token);
+    assert.equal(syncPolicy.device.id, 'windows-test-device');
+    assert.equal(syncPolicy.policy.id, 'default-policy');
+
+    const heartbeat = await postJson(`${baseUrl}/devices/heartbeat`, config.token, {
+      deviceId: 'windows-test-device',
+      version: '0.2.0',
+      platform: 'win32'
+    });
+    assert.equal(heartbeat.device.status, 'online');
   } finally {
     child.kill('SIGTERM');
     await waitForExit(child);
@@ -86,6 +111,19 @@ async function postJson(url, token, payload) {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+  const body = await response.json();
+  assert.equal(response.ok, true, body.error);
+  return body;
+}
+
+async function postJsonWithoutToken(url, payload) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
       'content-type': 'application/json'
     },
     body: JSON.stringify(payload)

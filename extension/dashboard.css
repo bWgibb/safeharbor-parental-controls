@@ -173,6 +173,14 @@ label {
   justify-content: flex-start;
 }
 
+.pairing-code {
+  color: #166a5b;
+  font-size: 28px;
+  font-weight: 750;
+  letter-spacing: 0;
+  margin: 10px 0;
+}
+
 table {
   border-collapse: collapse;
   width: 100%;

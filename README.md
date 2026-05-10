@@ -138,6 +138,7 @@ Authorization: Bearer <local-token>
 The extension dashboard can:
 
 - Show child profile and local device status.
+- Generate short-lived device pairing codes.
 - Show total, allowed, blocked, estimated online minutes, and tamper counts.
 - Edit the local default allow/block mode.
 - Add and remove allow-list and block-list domains.
@@ -145,6 +146,18 @@ The extension dashboard can:
 - Add schedules and temporary overrides.
 - Save local alert preferences.
 - Review blocked attempts, top domains, daily summaries, and recent activity.
+
+## Local Sync and Enrollment
+
+The Phase 4 local foundation adds:
+
+- `POST /enrollment/code` to generate a short-lived pairing code.
+- `POST /devices/enroll` to enroll a device with a valid pairing code.
+- `POST /devices/heartbeat` to refresh device status.
+- `GET /sync/policy` to pull the current policy for a device.
+- `POST /sync/events` to upload event batches.
+
+These are localhost test-drive APIs for the future cloud sync model. Real parent accounts, hosted sync, and remote alerts are still future work.
 
 ## Testing
 

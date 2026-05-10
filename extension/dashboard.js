@@ -27,6 +27,7 @@ $('allowForm').addEventListener('submit', event => addDomain(event, 'allowedDoma
 $('blockForm').addEventListener('submit', event => addDomain(event, 'blockedDomains', 'blockDomain', 'block'));
 $('scheduleForm').addEventListener('submit', addSchedule);
 $('overrideForm').addEventListener('submit', addOverride);
+$('generateCode').addEventListener('click', generateEnrollmentCode);
 
 for (const id of ['alertBlocked', 'alertTamper', 'alertOffline']) {
   $(id).addEventListener('change', saveAlertPrefs);
@@ -101,8 +102,17 @@ function renderFamily() {
     ...state.profiles.map(profile => summaryRow(profile.name, profile.id))
   );
   $('devices').replaceChildren(
-    ...state.devices.map(device => summaryRow(device.name, `${device.platform} · ${formatReginaTime(device.lastSeenAt)}`))
+    ...state.devices.map(device => summaryRow(device.name, `${device.status} · ${device.platform} · ${formatReginaTime(device.lastSeenAt)}`))
   );
+  renderEnrollmentCodes();
+}
+
+function renderEnrollmentCodes() {
+  const rows = Array.isArray(state.enrollmentCodes) ? state.enrollmentCodes : [];
+  $('enrollmentCodes').replaceChildren(...rows.slice(0, 5).map(code => {
+    const status = code.usedAt ? `used ${formatReginaTime(code.usedAt)}` : `expires ${formatReginaTime(code.expiresAt)}`;
+    return stackItem(`Profile ${code.profileId} · ${status}`, null);
+  }));
 }
 
 function renderPolicy() {
@@ -297,8 +307,23 @@ function summaryRow(label, value) {
 function stackItem(text, onRemove) {
   const row = document.createElement('div');
   row.className = 'stack-item';
-  row.append(el('span', text), removeButton(onRemove));
+  row.append(el('span', text));
+  if (onRemove) row.append(removeButton(onRemove));
   return row;
+}
+
+async function generateEnrollmentCode() {
+  setStatus('Generating pairing code...', '');
+  try {
+    const result = await fetchJson('/enrollment/code', {
+      method: 'POST',
+      body: JSON.stringify({ profileId: state.profiles[0]?.id })
+    });
+    $('pairingCode').textContent = `${result.code} · expires ${formatReginaTime(result.expiresAt)}`;
+    await loadDashboard();
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
 }
 
 function removeButton(onClick) {

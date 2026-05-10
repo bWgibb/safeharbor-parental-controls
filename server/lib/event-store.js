@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 class EventStore {
   constructor(databaseFile) {
@@ -65,6 +65,20 @@ class EventStore {
       CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
       CREATE INDEX IF NOT EXISTS idx_events_domain ON events(domain);
       CREATE INDEX IF NOT EXISTS idx_events_decision ON events(decision);
+
+      CREATE TABLE IF NOT EXISTS enrollment_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        code_hash TEXT NOT NULL UNIQUE,
+        profile_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        used_by_device_id TEXT,
+        FOREIGN KEY (profile_id) REFERENCES profiles(id),
+        FOREIGN KEY (used_by_device_id) REFERENCES devices(id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_enrollment_codes_expires ON enrollment_codes(expires_at DESC);
     `);
     this.db.pragma(`user_version = ${SCHEMA_VERSION}`);
   }
@@ -119,7 +133,39 @@ class EventStore {
       SELECT id, name, platform, profile_id AS profileId, created_at AS createdAt, last_seen_at AS lastSeenAt
       FROM devices
       ORDER BY name
-    `).all();
+    `).all().map(device => ({
+      ...device,
+      status: deviceStatus(device.lastSeenAt)
+    }));
+  }
+
+  getDevice(deviceId) {
+    const row = this.db.prepare(`
+      SELECT id, name, platform, profile_id AS profileId, created_at AS createdAt, last_seen_at AS lastSeenAt
+      FROM devices
+      WHERE id = ?
+    `).get(deviceId);
+    return row ? { ...row, status: deviceStatus(row.lastSeenAt) } : null;
+  }
+
+  upsertDevice(device) {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO devices (id, name, platform, profile_id, created_at, last_seen_at)
+      VALUES (@id, @name, @platform, @profileId, @createdAt, @lastSeenAt)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        platform = excluded.platform,
+        profile_id = excluded.profile_id,
+        last_seen_at = excluded.last_seen_at
+    `).run({
+      id: device.id,
+      name: device.name,
+      platform: device.platform,
+      profileId: device.profileId,
+      createdAt: device.createdAt || now,
+      lastSeenAt: device.lastSeenAt || now
+    });
   }
 
   getPolicy(profileId) {
@@ -136,6 +182,17 @@ class EventStore {
   getPolicyById(policyId) {
     const row = this.db.prepare('SELECT config_json AS configJson FROM policies WHERE id = ?').get(policyId);
     return row ? JSON.parse(row.configJson) : null;
+  }
+
+  getPolicyRecord(profileId) {
+    const row = this.db.prepare(`
+      SELECT id, config_json AS configJson, updated_at AS updatedAt
+      FROM policies
+      WHERE profile_id = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get(profileId);
+    return row ? { id: row.id, policy: JSON.parse(row.configJson), updatedAt: row.updatedAt } : null;
   }
 
   upsertPolicy(policy) {
@@ -161,6 +218,47 @@ class EventStore {
 
   touchDevice(deviceId, timestamp = new Date().toISOString()) {
     this.db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(timestamp, deviceId);
+  }
+
+  createEnrollmentCode(enrollment) {
+    this.db.prepare(`
+      INSERT INTO enrollment_codes (code_hash, profile_id, created_at, expires_at)
+      VALUES (@codeHash, @profileId, @createdAt, @expiresAt)
+    `).run(enrollment);
+  }
+
+  consumeEnrollmentCode(codeHash, deviceId, usedAt = new Date().toISOString()) {
+    const row = this.db.prepare(`
+      SELECT id, profile_id AS profileId, expires_at AS expiresAt, used_at AS usedAt
+      FROM enrollment_codes
+      WHERE code_hash = ?
+    `).get(codeHash);
+    if (!row || row.usedAt || row.expiresAt < usedAt) return null;
+    this.db.prepare(`
+      UPDATE enrollment_codes
+      SET used_at = ?
+      WHERE id = ?
+    `).run(usedAt, row.id);
+    return row;
+  }
+
+  completeEnrollmentCode(enrollmentId, deviceId) {
+    this.db.prepare(`
+      UPDATE enrollment_codes
+      SET used_by_device_id = ?
+      WHERE id = ?
+    `).run(deviceId, enrollmentId);
+  }
+
+  recentEnrollmentCodes(limit = 10) {
+    return this.db.prepare(`
+      SELECT
+        id, profile_id AS profileId, created_at AS createdAt, expires_at AS expiresAt,
+        used_at AS usedAt, used_by_device_id AS usedByDeviceId
+      FROM enrollment_codes
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(limit);
   }
 
   recordEvent(event) {
@@ -304,6 +402,15 @@ class EventStore {
   close() {
     this.db.close();
   }
+}
+
+function deviceStatus(lastSeenAt) {
+  if (!lastSeenAt) return 'never_seen';
+  const ageMs = Date.now() - new Date(lastSeenAt).getTime();
+  if (Number.isNaN(ageMs)) return 'unknown';
+  if (ageMs <= 2 * 60 * 1000) return 'online';
+  if (ageMs <= 30 * 60 * 1000) return 'recent';
+  return 'offline';
 }
 
 module.exports = {

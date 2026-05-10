@@ -20,6 +20,7 @@ This document captures the phase 1 product foundation so future implementation w
 - Windows target, macOS development loop: build core behavior so it can run and be tested on macOS, then validate Windows-specific installation, startup, permissions, Edge/Chrome deployment, child-account behavior, and tamper resistance on Windows.
 - Browser enforcement first: Chrome is the first target, with Edge and Firefox later.
 - Cloud API later: sync policies down and activity up after local policy enforcement is useful.
+- Local sync first: the agent now exposes localhost enrollment, heartbeat, policy pull, and event upload endpoints as the testable shape for later cloud sync.
 - Parent dashboard: build as a responsive web app that works well on mobile before considering native mobile apps.
 - Local dashboard first: the extension-hosted dashboard is the current parent interface until cloud accounts and sync exist.
 - Native helper later: add stronger service installation, watchdog, and tamper detection after the policy model is stable.

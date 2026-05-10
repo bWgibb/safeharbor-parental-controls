@@ -12,11 +12,12 @@ const { EventStore } = require('./lib/event-store');
 const { evaluatePolicy, normalizePolicy } = require('./lib/policy-engine');
 
 const APP_NAME = 'SafeHarbor';
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const DEFAULT_PORT = 43718;
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RECENT_ACTIVITY = 50;
+const ENROLLMENT_CODE_MINUTES = 15;
 const REGINA_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Regina',
   year: 'numeric',
@@ -254,6 +255,17 @@ function domainFromUrl(value) {
   }
 }
 
+function hashEnrollmentCode(code) {
+  return crypto
+    .createHash('sha256')
+    .update(`${config.token}:${code}`)
+    .digest('hex');
+}
+
+function generateEnrollmentCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
 function normalizePayload(body, fallbackType) {
   const tab = body && typeof body.tab === 'object' && body.tab ? body.tab : {};
   const content = body && typeof body.content === 'object' && body.content ? body.content : {};
@@ -349,6 +361,7 @@ function statusBody() {
     ...configBody(),
     profiles: store.getProfiles(),
     devices: store.getDevices(),
+    enrollmentCodes: store.recentEnrollmentCodes(),
     policy: getDefaultContext().policy,
     reports,
     recentActivity: store.recentEvents(MAX_RECENT_ACTIVITY)
@@ -549,6 +562,147 @@ async function handlePolicyUpdate(req, res) {
   sendJson(res, 200, { ok: true, policy });
 }
 
+async function handleEnrollmentCodeCreate(req, res) {
+  if (!requireAuthorized(req, res)) return;
+
+  const body = await readBody(req);
+  const { profile } = getDefaultContext();
+  const profileId = asString(body.profileId, profile.id);
+  const code = generateEnrollmentCode();
+  const createdAt = nowIso();
+  const expiresAt = new Date(Date.now() + ENROLLMENT_CODE_MINUTES * 60 * 1000).toISOString();
+  store.createEnrollmentCode({
+    codeHash: hashEnrollmentCode(code),
+    profileId,
+    createdAt,
+    expiresAt
+  });
+  store.recordEvent({
+    type: 'enrollment_code_created',
+    timestamp: createdAt,
+    profileId,
+    source: 'parent-dashboard',
+    metadata: { expiresAt }
+  });
+  sendJson(res, 201, { ok: true, code, profileId, expiresAt });
+}
+
+async function handleDeviceEnroll(req, res) {
+  const body = await readBody(req);
+  const code = asString(body.code).replace(/\D/g, '');
+  if (!/^\d{6}$/.test(code)) {
+    sendJson(res, 400, { ok: false, error: 'valid_6_digit_code_required' });
+    return;
+  }
+
+  const deviceId = asString(body.deviceId, `device-${crypto.randomUUID()}`);
+  const enrollment = store.consumeEnrollmentCode(hashEnrollmentCode(code), deviceId);
+  if (!enrollment) {
+    sendJson(res, 400, { ok: false, error: 'invalid_or_expired_enrollment_code' });
+    return;
+  }
+
+  const timestamp = nowIso();
+  const device = {
+    id: deviceId,
+    name: asString(body.name, 'Enrolled Device'),
+    platform: asString(body.platform, 'unknown'),
+    profileId: enrollment.profileId,
+    createdAt: timestamp,
+    lastSeenAt: timestamp
+  };
+  store.upsertDevice(device);
+  store.completeEnrollmentCode(enrollment.id, deviceId);
+  const policyRecord = store.getPolicyRecord(enrollment.profileId);
+  store.recordEvent({
+    type: 'device_enrolled',
+    timestamp,
+    profileId: enrollment.profileId,
+    deviceId,
+    source: 'device-enrollment',
+    metadata: { platform: device.platform }
+  });
+  sendJson(res, 201, {
+    ok: true,
+    device: store.getDevice(deviceId),
+    profileId: enrollment.profileId,
+    policy: policyRecord ? policyRecord.policy : null,
+    policyUpdatedAt: policyRecord ? policyRecord.updatedAt : null,
+    serverTime: timestamp
+  });
+}
+
+async function handleHeartbeat(req, res) {
+  if (!requireAuthorized(req, res)) return;
+
+  const body = await readBody(req);
+  const { device } = getDefaultContext();
+  const deviceId = asString(body.deviceId, device.id);
+  const timestamp = nowIso();
+  store.touchDevice(deviceId, timestamp);
+  store.recordEvent({
+    type: 'device_heartbeat',
+    timestamp,
+    deviceId,
+    source: asString(body.source, 'local-agent'),
+    metadata: {
+      version: asString(body.version),
+      platform: asString(body.platform)
+    }
+  });
+  sendJson(res, 200, { ok: true, device: store.getDevice(deviceId), serverTime: timestamp });
+}
+
+async function handleSyncEvents(req, res) {
+  if (!requireAuthorized(req, res)) return;
+
+  const body = await readBody(req);
+  const events = Array.isArray(body.events) ? body.events : [];
+  if (!events.length) {
+    sendJson(res, 400, { ok: false, error: 'events_required' });
+    return;
+  }
+
+  const accepted = [];
+  for (const event of events.slice(0, 100)) {
+    const timestamp = asString(event.timestamp, nowIso());
+    store.recordEvent({
+      type: asString(event.type, 'sync_event'),
+      timestamp,
+      url: asString(event.url),
+      domain: asString(event.domain) || domainFromUrl(asString(event.url)),
+      title: asString(event.title),
+      profileId: asString(event.profileId),
+      deviceId: asString(event.deviceId),
+      decision: asString(event.decision),
+      ruleId: asString(event.ruleId),
+      reason: asString(event.reason),
+      category: asString(event.category),
+      source: asString(event.source, 'sync'),
+      metadata: event.metadata && typeof event.metadata === 'object' ? event.metadata : {}
+    });
+    accepted.push(timestamp);
+  }
+
+  sendJson(res, 202, { ok: true, accepted: accepted.length, serverTime: nowIso() });
+}
+
+function syncPolicyBody(deviceId) {
+  const fallback = getDefaultContext();
+  const device = store.getDevice(deviceId) || fallback.device;
+  const profileId = device.profileId || fallback.profile.id;
+  const policyRecord = store.getPolicyRecord(profileId);
+  store.touchDevice(device.id);
+  return {
+    ok: true,
+    device: store.getDevice(device.id),
+    profile: store.getProfiles().find(item => item.id === profileId) || fallback.profile,
+    policy: policyRecord ? policyRecord.policy : fallback.policy,
+    policyUpdatedAt: policyRecord ? policyRecord.updatedAt : null,
+    serverTime: nowIso()
+  };
+}
+
 function validatePolicy(policy) {
   if (!['allow', 'block'].includes(policy.defaultAction)) return 'invalid_default_action';
   if (!policy.id) return 'policy_id_required';
@@ -616,6 +770,45 @@ const server = http.createServer(async (req, res) => {
         devices: store.getDevices(),
         policy: getDefaultContext().policy
       });
+      return;
+    }
+
+    if (req.method === 'GET' && parsed.pathname === '/devices') {
+      if (!requireAuthorized(req, res)) return;
+      sendJson(res, 200, { ok: true, devices: store.getDevices() });
+      return;
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/devices/heartbeat') {
+      await handleHeartbeat(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && parsed.pathname === '/enrollment/codes') {
+      if (!requireAuthorized(req, res)) return;
+      sendJson(res, 200, { ok: true, enrollmentCodes: store.recentEnrollmentCodes() });
+      return;
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/enrollment/code') {
+      await handleEnrollmentCodeCreate(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/devices/enroll') {
+      await handleDeviceEnroll(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && parsed.pathname === '/sync/policy') {
+      if (!requireAuthorized(req, res)) return;
+      const { device } = getDefaultContext();
+      sendJson(res, 200, syncPolicyBody(asString(parsed.searchParams.get('deviceId'), device.id)));
+      return;
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/sync/events') {
+      await handleSyncEvents(req, res);
       return;
     }
 

@@ -43,3 +43,43 @@ test('seeds local profile, device, policy, and reports events', () => {
 
   store.close();
 });
+
+test('creates enrollment codes and registers devices', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'safeharbor-enroll-'));
+  const store = new EventStore(path.join(dir, 'test.sqlite'));
+  store.seed({
+    profile: defaultProfile(),
+    device: defaultDevice(),
+    policy: defaultPolicy()
+  });
+
+  store.createEnrollmentCode({
+    codeHash: 'hash-123',
+    profileId: 'default-child',
+    createdAt: '2026-05-10T12:00:00.000Z',
+    expiresAt: '2026-05-10T12:15:00.000Z'
+  });
+
+  const enrollment = store.consumeEnrollmentCode(
+    'hash-123',
+    'device-test',
+    '2026-05-10T12:01:00.000Z'
+  );
+  assert.equal(enrollment.profileId, 'default-child');
+
+  store.upsertDevice({
+    id: 'device-test',
+    name: 'Test Device',
+    platform: 'win32',
+    profileId: enrollment.profileId,
+    createdAt: '2026-05-10T12:01:00.000Z',
+    lastSeenAt: '2026-05-10T12:01:00.000Z'
+  });
+  store.completeEnrollmentCode(enrollment.id, 'device-test');
+
+  assert.equal(store.getDevice('device-test').name, 'Test Device');
+  assert.equal(store.consumeEnrollmentCode('hash-123', 'other-device'), null);
+  assert.equal(store.recentEnrollmentCodes()[0].usedByDeviceId, 'device-test');
+
+  store.close();
+});
