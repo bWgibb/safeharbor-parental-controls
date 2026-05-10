@@ -7,9 +7,12 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 const { URL } = require('url');
+const { defaultDevice, defaultPolicy, defaultProfile } = require('./lib/defaults');
+const { EventStore } = require('./lib/event-store');
+const { evaluatePolicy, normalizePolicy } = require('./lib/policy-engine');
 
 const APP_NAME = 'SafeHarbor';
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const DEFAULT_PORT = 43718;
 const HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
@@ -25,7 +28,7 @@ const paths = {
   config: path.join(baseDir, 'config.json'),
   captures: path.join(baseDir, 'captures'),
   logs: path.join(baseDir, 'logs'),
-  activity: path.join(baseDir, 'activity.json')
+  database: path.join(baseDir, 'safeharbor.sqlite')
 };
 
 function ensureDir(dir) {
@@ -52,11 +55,13 @@ function loadConfig() {
 
   const existing = readJson(paths.config, null);
   if (existing && existing.token) {
-    return {
+    const next = {
       port: Number(process.env.PORT || existing.port || DEFAULT_PORT),
       capturesDir: path.resolve(existing.capturesDir || paths.captures),
       token: existing.token
     };
+    validateConfig(next);
+    return next;
   }
 
   const created = {
@@ -64,8 +69,21 @@ function loadConfig() {
     capturesDir: paths.captures,
     token: crypto.randomBytes(32).toString('hex')
   };
+  validateConfig(created);
   writeJson(paths.config, created);
   return created;
+}
+
+function validateConfig(value) {
+  if (!Number.isInteger(value.port) || value.port < 1 || value.port > 65535) {
+    throw new Error(`Invalid port in config: ${value.port}`);
+  }
+  if (typeof value.token !== 'string' || value.token.length < 32) {
+    throw new Error('Invalid local auth token in config.');
+  }
+  if (typeof value.capturesDir !== 'string' || !value.capturesDir.trim()) {
+    throw new Error('Invalid captures directory in config.');
+  }
 }
 
 const config = loadConfig();
@@ -76,21 +94,33 @@ if (args.has('--show-token')) {
   process.exit(0);
 }
 
+const store = new EventStore(paths.database);
+store.seed({
+  profile: defaultProfile(),
+  device: defaultDevice(),
+  policy: defaultPolicy()
+});
+
 if (args.has('--print-config')) {
-  process.stdout.write(JSON.stringify({
+  process.stdout.write(JSON.stringify(configBody(), null, 2) + '\n');
+  process.exit(0);
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function configBody() {
+  return {
     app: APP_NAME,
     version: VERSION,
     host: HOST,
     port: config.port,
     configFile: paths.config,
     capturesDir: config.capturesDir,
+    databaseFile: paths.database,
     logsDir: paths.logs
-  }, null, 2) + '\n');
-  process.exit(0);
-}
-
-function nowIso() {
-  return new Date().toISOString();
+  };
 }
 
 function rotateLogIfNeeded(file) {
@@ -109,12 +139,6 @@ function logEvent(level, message, details = {}) {
   const file = path.join(paths.logs, 'server.log');
   rotateLogIfNeeded(file);
   fs.appendFileSync(file, line);
-}
-
-function rememberActivity(activity) {
-  const existing = readJson(paths.activity, []);
-  const next = [{ timestamp: nowIso(), ...activity }, ...existing].slice(0, MAX_RECENT_ACTIVITY);
-  writeJson(paths.activity, next);
 }
 
 function sendJson(res, statusCode, body, extraHeaders = {}) {
@@ -203,6 +227,14 @@ function slugify(value) {
   return text || 'capture';
 }
 
+function domainFromUrl(value) {
+  try {
+    return new URL(value).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 function normalizePayload(body, fallbackType) {
   const tab = body && typeof body.tab === 'object' && body.tab ? body.tab : {};
   const content = body && typeof body.content === 'object' && body.content ? body.content : {};
@@ -232,11 +264,12 @@ function normalizePayload(body, fallbackType) {
       readableText: truncate(content.readableText, 200000),
       html: null
     },
-    intent: asString(body.intent, 'save'),
+    intent: asString(body.intent, 'debug-export'),
     metadata: {
       client: metadata.client || null,
       project: metadata.project || null,
-      tags: Array.isArray(metadata.tags) ? metadata.tags.filter(tag => typeof tag === 'string') : []
+      tags: Array.isArray(metadata.tags) ? metadata.tags.filter(tag => typeof tag === 'string') : [],
+      page: metadata.page || null
     }
   };
 }
@@ -283,25 +316,33 @@ function writeCapture(payload) {
   return filePath;
 }
 
+function getDefaultContext() {
+  const [profile] = store.getProfiles();
+  const device = store.getDevices().find(item => item.profileId === profile.id) || store.getDevices()[0];
+  const policy = store.getPolicy(profile.id);
+  return { profile, device, policy };
+}
+
 function statusBody() {
+  const reports = store.reports();
   return {
     ok: true,
-    app: APP_NAME,
-    version: VERSION,
-    host: HOST,
-    port: config.port,
-    configFile: paths.config,
-    capturesDir: config.capturesDir,
-    recentActivity: readJson(paths.activity, [])
+    ...configBody(),
+    profiles: store.getProfiles(),
+    devices: store.getDevices(),
+    policy: getDefaultContext().policy,
+    reports,
+    recentActivity: store.recentEvents(MAX_RECENT_ACTIVITY)
   };
 }
 
 function statusHtml(body) {
   const rows = body.recentActivity.map(item => {
     const url = item.url ? `<a href="${escapeHtml(item.url)}">${escapeHtml(item.url)}</a>` : '';
-    return `<tr><td>${escapeHtml(item.timestamp)}</td><td>${escapeHtml(item.type || '')}</td><td>${escapeHtml(item.title || '')}</td><td>${url}</td><td>${escapeHtml(item.file || '')}</td></tr>`;
+    return `<tr><td>${escapeHtml(item.timestamp)}</td><td>${escapeHtml(item.type || '')}</td><td>${escapeHtml(item.decision || '')}</td><td>${escapeHtml(item.reason || '')}</td><td>${url}</td></tr>`;
   }).join('');
 
+  const counts = body.reports.counts;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -311,6 +352,9 @@ function statusHtml(body) {
   <style>
     body { color: #17202a; font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 32px; }
     code { background: #eef2f6; border-radius: 4px; padding: 2px 5px; }
+    .metrics { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 20px 0; }
+    .metric { border: 1px solid #d9e0e8; border-radius: 6px; padding: 12px; }
+    .metric strong { display: block; font-size: 22px; }
     table { border-collapse: collapse; margin-top: 20px; width: 100%; }
     th, td { border-bottom: 1px solid #d9e0e8; padding: 8px; text-align: left; vertical-align: top; }
     th { background: #f5f7fa; }
@@ -319,11 +363,17 @@ function statusHtml(body) {
 <body>
   <h1>${APP_NAME}</h1>
   <p>Server is running on <code>${HOST}:${body.port}</code>.</p>
-  <p>Captures directory: <code>${escapeHtml(body.capturesDir)}</code></p>
+  <p>SQLite database: <code>${escapeHtml(body.databaseFile)}</code></p>
+  <div class="metrics">
+    <div class="metric"><strong>${counts.totalEvents}</strong>Total Events</div>
+    <div class="metric"><strong>${counts.allowedVisits}</strong>Allowed</div>
+    <div class="metric"><strong>${counts.blockedVisits}</strong>Blocked</div>
+    <div class="metric"><strong>${counts.tamperSignals}</strong>Tamper Signals</div>
+  </div>
   <h2>Recent Activity</h2>
   <table>
-    <thead><tr><th>Time</th><th>Type</th><th>Title</th><th>URL</th><th>File</th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="5">No captures yet.</td></tr>'}</tbody>
+    <thead><tr><th>Time</th><th>Type</th><th>Decision</th><th>Reason</th><th>URL</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="5">No events yet.</td></tr>'}</tbody>
   </table>
 </body>
 </html>`;
@@ -337,22 +387,30 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
+function requireAuthorized(req, res) {
+  if (isAuthorized(req)) return true;
+  unauthorized(res);
+  return false;
+}
+
 async function handleCapture(req, res, fallbackType) {
-  if (!isAuthorized(req)) {
-    unauthorized(res);
-    return;
-  }
+  if (!requireAuthorized(req, res)) return;
 
   const body = await readBody(req);
   const payload = normalizePayload(body, fallbackType);
   const filePath = writeCapture(payload);
+  const { profile, device } = getDefaultContext();
 
-  rememberActivity({
+  store.recordEvent({
     type: payload.type,
-    intent: payload.intent,
-    title: payload.tab.title,
+    timestamp: payload.timestamp,
     url: payload.tab.url,
-    file: filePath
+    domain: domainFromUrl(payload.tab.url),
+    title: payload.tab.title,
+    profileId: profile.id,
+    deviceId: device.id,
+    source: payload.source,
+    metadata: { file: filePath, intent: payload.intent, page: payload.metadata.page }
   });
 
   logEvent('info', 'capture_saved', {
@@ -364,21 +422,139 @@ async function handleCapture(req, res, fallbackType) {
   sendJson(res, 200, { ok: true, file: filePath });
 }
 
-async function handleAction(req, res) {
-  if (!isAuthorized(req)) {
-    unauthorized(res);
-    return;
-  }
+async function handleEvaluate(req, res) {
+  if (!requireAuthorized(req, res)) return;
 
   const body = await readBody(req);
-  rememberActivity({
-    type: 'action',
-    intent: asString(body.intent, 'unknown'),
+  const { profile, device, policy } = getDefaultContext();
+  const profileId = asString(body.profileId, profile.id);
+  const deviceId = asString(body.deviceId, device.id);
+  const activePolicy = store.getPolicy(profileId) || policy;
+  const decision = evaluatePolicy({
+    url: asString(body.url),
+    timestamp: asString(body.timestamp, nowIso()),
+    profileId,
+    deviceId,
+    policy: activePolicy
+  });
+
+  store.recordEvent({
+    type: 'visit_decision',
+    timestamp: decision.timestamp,
+    url: asString(body.url),
+    domain: decision.domain,
     title: asString(body.title),
-    url: asString(body.url)
+    profileId,
+    deviceId,
+    decision: decision.action,
+    ruleId: decision.ruleId,
+    reason: decision.reason,
+    category: decision.category,
+    source: asString(body.source, 'chrome-extension'),
+    metadata: { policyId: activePolicy.id }
+  });
+  store.touchDevice(deviceId, decision.timestamp);
+
+  sendJson(res, 200, {
+    ok: true,
+    profileId,
+    deviceId,
+    policyId: activePolicy.id,
+    decision
+  });
+}
+
+async function handleAction(req, res) {
+  if (!requireAuthorized(req, res)) return;
+
+  const body = await readBody(req);
+  const { profile, device } = getDefaultContext();
+  const timestamp = nowIso();
+  store.recordEvent({
+    type: 'action',
+    timestamp,
+    title: asString(body.title),
+    url: asString(body.url),
+    domain: domainFromUrl(asString(body.url)),
+    profileId: profile.id,
+    deviceId: device.id,
+    source: 'chrome-extension',
+    metadata: { intent: asString(body.intent, 'unknown') }
   });
   logEvent('info', 'action_received', { intent: asString(body.intent, 'unknown') });
   sendJson(res, 202, { ok: true, accepted: true });
+}
+
+async function handleEvent(req, res) {
+  if (!requireAuthorized(req, res)) return;
+
+  const body = await readBody(req);
+  const type = asString(body.type);
+  if (!type) {
+    sendJson(res, 400, { ok: false, error: 'event_type_required' });
+    return;
+  }
+
+  const { profile, device } = getDefaultContext();
+  const timestamp = asString(body.timestamp, nowIso());
+  store.recordEvent({
+    type,
+    timestamp,
+    url: asString(body.url),
+    domain: asString(body.domain) || domainFromUrl(asString(body.url)),
+    title: asString(body.title),
+    profileId: asString(body.profileId, profile.id),
+    deviceId: asString(body.deviceId, device.id),
+    decision: asString(body.decision),
+    ruleId: asString(body.ruleId),
+    reason: asString(body.reason),
+    category: asString(body.category),
+    source: asString(body.source, 'local-agent'),
+    metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {}
+  });
+  sendJson(res, 202, { ok: true, accepted: true });
+}
+
+async function handlePolicyUpdate(req, res) {
+  if (!requireAuthorized(req, res)) return;
+
+  const body = await readBody(req);
+  const rawPolicy = body.policy && typeof body.policy === 'object' ? body.policy : body;
+  const policy = normalizePolicy(rawPolicy);
+  const validationError = validatePolicy(policy);
+  if (validationError) {
+    sendJson(res, 400, { ok: false, error: validationError });
+    return;
+  }
+  store.upsertPolicy(policy);
+  sendJson(res, 200, { ok: true, policy });
+}
+
+function validatePolicy(policy) {
+  if (!['allow', 'block'].includes(policy.defaultAction)) return 'invalid_default_action';
+  if (!policy.id) return 'policy_id_required';
+  if (!policy.profileId) return 'policy_profile_id_required';
+  const listNames = ['blockedDomains', 'allowedDomains', 'temporaryOverrides'];
+  for (const listName of listNames) {
+    for (const rule of policy[listName]) {
+      if (!rule.value && !rule.domain) return `${listName}_rule_domain_required`;
+    }
+  }
+  for (const rule of policy.schedules) {
+    if (!['allow', 'block'].includes(rule.action)) return 'schedule_action_invalid';
+    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(asString(rule.start))) return 'schedule_start_invalid';
+    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(asString(rule.end))) return 'schedule_end_invalid';
+  }
+  return '';
+}
+
+async function handleTokenRotate(req, res) {
+  if (!requireAuthorized(req, res)) return;
+
+  config.token = crypto.randomBytes(32).toString('hex');
+  writeJson(paths.config, config);
+  logEvent('info', 'token_rotated');
+  sendJson(res, 200, { ok: true, token: config.token });
 }
 
 const server = http.createServer(async (req, res) => {
@@ -396,22 +572,52 @@ const server = http.createServer(async (req, res) => {
         app: APP_NAME,
         version: VERSION,
         host: HOST,
-        port: config.port
+        port: config.port,
+        database: Boolean(store)
       });
       return;
     }
 
     if (req.method === 'GET' && parsed.pathname === '/status') {
-      if (!isAuthorized(req)) {
-        unauthorized(res);
-        return;
-      }
+      if (!requireAuthorized(req, res)) return;
       const body = statusBody();
       if ((req.headers.accept || '').includes('text/html')) {
         sendHtml(res, 200, statusHtml(body));
       } else {
         sendJson(res, 200, body);
       }
+      return;
+    }
+
+    if (req.method === 'GET' && parsed.pathname === '/policy') {
+      if (!requireAuthorized(req, res)) return;
+      sendJson(res, 200, {
+        ok: true,
+        profiles: store.getProfiles(),
+        devices: store.getDevices(),
+        policy: getDefaultContext().policy
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/policy') {
+      await handlePolicyUpdate(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/policy/evaluate') {
+      await handleEvaluate(req, res);
+      return;
+    }
+
+    if (req.method === 'GET' && parsed.pathname === '/reports/local') {
+      if (!requireAuthorized(req, res)) return;
+      sendJson(res, 200, { ok: true, reports: store.reports(), recentActivity: store.recentEvents(MAX_RECENT_ACTIVITY) });
+      return;
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/events') {
+      await handleEvent(req, res);
       return;
     }
 
@@ -430,6 +636,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && parsed.pathname === '/token/rotate') {
+      await handleTokenRotate(req, res);
+      return;
+    }
+
     sendJson(res, 404, { ok: false, error: 'not_found' });
   } catch (error) {
     const statusCode = error.statusCode || 500;
@@ -442,10 +653,30 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.on('error', error => {
+  logEvent('error', 'server_start_failed', { error: error.message, code: error.code });
+  if (error.code === 'EADDRINUSE') {
+    process.stderr.write(`${APP_NAME} could not start because ${HOST}:${config.port} is already in use.\n`);
+    process.stderr.write(`Start with another port, for example: PORT=${config.port + 1} npm start\n`);
+    store.close();
+    process.exit(1);
+    return;
+  }
+  store.close();
+  throw error;
+});
+
 server.listen(config.port, HOST, () => {
+  store.recordEvent({
+    type: 'agent_started',
+    timestamp: nowIso(),
+    source: 'local-agent',
+    metadata: { host: HOST, port: config.port, version: VERSION }
+  });
   logEvent('info', 'server_started', { host: HOST, port: config.port });
   process.stdout.write(`${APP_NAME} listening at http://${HOST}:${config.port}\n`);
   process.stdout.write(`Config: ${paths.config}\n`);
+  process.stdout.write(`SQLite: ${paths.database}\n`);
   process.stdout.write('Run `npm run token` to print the extension token.\n');
 });
 
@@ -454,5 +685,8 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 function shutdown(signal) {
   logEvent('info', 'server_stopping', { signal });
-  server.close(() => process.exit(0));
+  server.close(() => {
+    store.close();
+    process.exit(0);
+  });
 }

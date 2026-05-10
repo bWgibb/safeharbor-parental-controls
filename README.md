@@ -1,12 +1,12 @@
 # SafeHarbor
 
-SafeHarbor is an early parental-controls prototype. Today it includes a Chrome extension and a localhost Node.js server that authenticate with a local token, receive browser page or selection captures, and write timestamped Markdown files locally. The planned local activity store is SQLite, with Markdown retained only for optional debug/export captures.
+SafeHarbor is a local parental-controls MVP. It includes a Chrome extension, a localhost Node.js agent, a SQLite activity store, child/profile policy defaults, URL policy evaluation, browser blocking, local reporting, and optional Markdown debug/export captures.
 
 The broader product roadmap is tracked in [ROADMAP.md](ROADMAP.md).
 
 ## Current Status
 
-This repository is a foundation, not a complete parental-controls product yet. The next major work is to add child profiles, policy rules, browser blocking, reporting, a mobile-friendly parent dashboard, sync, alerts, and stronger tamper detection.
+This repository now has a local controls MVP, not a finished parental-controls product. The next major work is a mobile-friendly parent dashboard, sync, alerts, Windows release validation, and stronger tamper detection.
 
 ## Project Layout
 
@@ -40,7 +40,19 @@ This repository is a foundation, not a complete parental-controls product yet. T
 
 6. Click the extension button and use **Send current page**.
 
-Captures are written to:
+The default local policy blocks `example.com`, so you can test-drive blocking by visiting:
+
+```text
+https://example.com/
+```
+
+SQLite activity is written to:
+
+```text
+~/.safeharbor/local-agent/safeharbor.sqlite
+```
+
+Optional Markdown debug/export captures are written to:
 
 ```text
 ~/.safeharbor/local-agent/captures/
@@ -50,6 +62,12 @@ Override the local data directory with:
 
 ```sh
 SAFEHARBOR_HOME=/path/to/data npm start
+```
+
+If the default port is already in use, start on another port:
+
+```sh
+PORT=43719 npm start
 ```
 
 ## Windows Laptop Deployment
@@ -88,9 +106,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -Uninstal
 
 - `GET /health` - unauthenticated server health check
 - `GET /status` - authenticated recent activity/config summary
+- `GET /policy` - authenticated local profiles/devices/policy summary
+- `POST /policy` - authenticated local policy update
+- `POST /policy/evaluate` - authenticated URL policy evaluation and event logging
+- `GET /reports/local` - authenticated SQLite-backed report summary
+- `POST /events` - authenticated event ingestion for tamper signals or local events
 - `POST /capture/page` - authenticated page capture
 - `POST /capture/selection` - authenticated selected-text capture
 - `POST /action` - authenticated future action hook
+- `POST /token/rotate` - authenticated local token rotation
 
 Authenticated requests use:
 
@@ -101,7 +125,19 @@ Authorization: Bearer <local-token>
 ## Safety Defaults
 
 - Server listens on `127.0.0.1` only.
-- Page content is sent only after a user clicks the extension.
+- Page content is sent only after a user clicks the explicit debug/export capture action.
 - Extension stores only the local server token.
-- Captures are local Markdown files in the current prototype. The roadmap moves activity/events to SQLite for reporting and policy history.
-- No real browser blocking, parent dashboard, account system, cloud sync, or tamper resistance exists yet.
+- Activity/events are stored in SQLite for reporting and policy history.
+- Full page text is not stored by default.
+- A local admin can still disable or remove consumer controls. Stronger tamper resistance remains future work.
+
+## Testing
+
+Run syntax checks and automated tests:
+
+```sh
+npm run check
+npm test
+```
+
+The tests cover the rule engine, SQLite event store, and a server smoke path that evaluates the default blocked domain.

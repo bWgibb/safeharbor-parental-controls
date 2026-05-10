@@ -27,6 +27,11 @@ h1 {
   margin: 0;
 }
 
+h2 {
+  font-size: 17px;
+  margin: 24px 0 10px;
+}
+
 button {
   background: #ffffff;
   border: 1px solid #b8c4d4;
@@ -42,6 +47,29 @@ button {
   display: grid;
   gap: 8px;
   margin-bottom: 18px;
+}
+
+#metrics {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  margin-bottom: 18px;
+}
+
+.metric {
+  background: #ffffff;
+  border: 1px solid #d9e0e8;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.metric strong {
+  display: block;
+  font-size: 24px;
+}
+
+.metric span {
+  color: #425466;
 }
 
 .summary-row {

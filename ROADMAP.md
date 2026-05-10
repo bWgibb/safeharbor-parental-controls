@@ -20,70 +20,72 @@ Status: completed in the initial foundation pass. See [docs/FOUNDATION.md](docs/
 
 ## Phase 2: Core Controls MVP
 
+Status: completed for the local MVP. Remaining Windows release validation continues in later deployment and tamper-resistance phases.
+
 Phase 2 should produce a local, testable parental-controls MVP that works on macOS for development and is ready for Windows validation.
 
 **Goal 2.1: Platform-Neutral Development Loop**
 Outcome: core controls can be built and tested on macOS while Windows remains the primary deployment target.
 
-Done when:
-- The local agent, SQLite store, rule engine, API routes, reporting queries, and Chrome extension behavior run on macOS.
-- Windows-only behavior is isolated behind scripts or small platform modules.
-- GitHub Actions has at least one Windows runner job for checks and script validation.
+Done:
+- [x] The local agent, SQLite store, rule engine, API routes, reporting queries, and Chrome extension behavior run on macOS.
+- [x] Windows-only behavior is isolated behind scripts or small platform modules.
+- [x] GitHub Actions has at least one Windows runner job for checks and script validation.
 
 **Goal 2.2: Local Data Model and SQLite Store**
 Outcome: SafeHarbor has a structured local event store for policy history and reporting.
 
-Done when:
-- SQLite stores visits, blocks, policy decisions, override requests, tamper signals, device status, timestamps, domains, categories, child profile IDs, and device IDs.
-- Markdown output is only an optional debug/export path for manually triggered page or selection snapshots.
-- Full page text is not stored by default.
-- Database migrations or schema initialization are repeatable and covered by tests.
+Done:
+- [x] SQLite stores visits, blocks, policy decisions, override requests, tamper signals, device status, timestamps, domains, categories, child profile IDs, and device IDs.
+- [x] Markdown output is only an optional debug/export path for manually triggered page or selection snapshots.
+- [x] Full page text is not stored by default.
+- [x] Database migrations or schema initialization are repeatable and covered by tests.
 
 **Goal 2.3: Child Profiles and Local Policy**
 Outcome: policies can be assigned to child profiles and evaluated locally.
 
-Done when:
-- A local profile model exists for at least one child profile and one managed device.
-- Policies support allow lists, block lists, schedules, categories, per-child rules, per-device rules, temporary overrides, and a default allow/block mode.
-- Policy files or database records are validated before use.
-- Invalid policy config fails clearly without crashing the agent.
+Done:
+- [x] A local profile model exists for at least one child profile and one managed device.
+- [x] Policies support allow lists, block lists, schedules, categories, per-child rules, per-device rules, temporary overrides, and a default allow/block mode.
+- [x] Policy files or database records are validated before use.
+- [x] Invalid policy config fails clearly without crashing the agent.
 
 **Goal 2.4: Rule Engine**
 Outcome: URL and schedule decisions are deterministic, testable, and independent of browser UI code.
 
-Done when:
-- The rule engine accepts URL, timestamp, child profile, device, and policy inputs.
-- It returns allow/block decisions with rule IDs, reasons, and enough metadata for reporting.
-- Unit tests cover exact domain matches, subdomains, paths, schedules, overrides, default behavior, and conflict precedence.
-- Rule decisions do not require network access.
+Done:
+- [x] The rule engine accepts URL, timestamp, child profile, device, and policy inputs.
+- [x] It returns allow/block decisions with rule IDs, reasons, and enough metadata for reporting.
+- [x] Unit tests cover exact domain matches, subdomains, paths, schedules, overrides, default behavior, and conflict precedence.
+- [x] Rule decisions do not require network access.
 
 **Goal 2.5: Browser Enforcement**
 Outcome: Chrome can enforce local policy decisions before or during navigation.
 
-Done when:
-- The extension checks URLs against the local policy path.
-- Blocked navigation shows a SafeHarbor block page with the reason and timestamp.
-- Allowed and blocked visits are logged to SQLite.
-- The extension handles missing server/token/policy states with clear parent-facing errors.
-- The current manual page/selection capture flow remains available only as an explicit debug/export action.
+Done:
+- [x] The extension checks URLs against the local policy path.
+- [x] Blocked navigation shows a SafeHarbor block page with the reason and timestamp.
+- [x] Allowed and blocked visits are logged to SQLite.
+- [x] The extension handles missing server/token/policy states with clear parent-facing errors.
+- [x] The current manual page/selection capture flow remains available only as an explicit debug/export action.
 
 **Goal 2.6: Local Reporting**
 Outcome: parents can inspect useful local activity without cloud sync.
 
-Done when:
-- `/status` or a local status page reads from SQLite.
-- Reports show recent activity, blocked attempts, top domains, category counts, schedule violations, and tamper signals where available.
-- Reporting queries avoid exposing full page text by default.
-- Report output is usable from the Chrome extension status page or local server page.
+Done:
+- [x] `/status` or a local status page reads from SQLite.
+- [x] Reports show recent activity, blocked attempts, top domains, category counts, schedule violations, and tamper signals where available.
+- [x] Reporting queries avoid exposing full page text by default.
+- [x] Report output is usable from the Chrome extension status page or local server page.
 
 **Goal 2.7: Local Agent Robustness**
 Outcome: the local server is reliable enough for regular test use.
 
-Done when:
-- Extension-to-server auth is tightened beyond the current static-token prototype or has a documented upgrade path.
-- Token rotation, config validation, structured logs, crash-safe startup, health checks, and clear error responses exist.
-- The Windows startup script and macOS/Linux start script target the current server entrypoint.
-- Startup and config behavior are covered by automated checks where practical.
+Done:
+- [x] Extension-to-server auth keeps localhost bearer-token auth and adds token rotation; stronger pairing remains a later hardening item.
+- [x] Token rotation, config validation, structured logs, crash-safe startup, health checks, and clear error responses exist.
+- [x] The Windows startup script and macOS/Linux start script target the current server entrypoint.
+- [x] Startup and config behavior are covered by automated checks where practical.
 
 ## Phase 3: Parent Dashboard
 

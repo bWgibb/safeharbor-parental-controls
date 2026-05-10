@@ -1,6 +1,6 @@
 {
   "name": "safeharbor-parental-controls",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "SafeHarbor parental controls prototype with a local agent and Chrome extension.",
   "type": "commonjs",
@@ -8,9 +8,13 @@
     "start": "node server/safeharbor-server.js",
     "token": "node server/safeharbor-server.js --show-token",
     "config": "node server/safeharbor-server.js --print-config",
-    "check": "node --check server/safeharbor-server.js && node --check extension/background.js && node --check extension/popup.js && node --check extension/options.js && node --check extension/status.js"
+    "check": "node --check server/safeharbor-server.js && node --check server/lib/defaults.js && node --check server/lib/event-store.js && node --check server/lib/policy-engine.js && node --check extension/background.js && node --check extension/block.js && node --check extension/popup.js && node --check extension/options.js && node --check extension/status.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0"
   }
 }

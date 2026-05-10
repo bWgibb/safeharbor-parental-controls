@@ -2,6 +2,14 @@
 
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:43718';
 
+chrome.webNavigation.onBeforeNavigate.addListener(details => {
+  if (details.frameId !== 0 || details.tabId < 0) return;
+  if (!/^https?:\/\//.test(details.url || '')) return;
+
+  evaluateNavigation(details)
+    .catch(error => showBadge(details.tabId, 'ERR', '#a22222', error.message));
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message.type !== 'string') return false;
 
@@ -138,6 +146,45 @@ async function sendCurrentPage(includeReadableText) {
   return { ok: true, file: body.file };
 }
 
+async function evaluateNavigation(details) {
+  const settings = await getSettings();
+  if (!settings.token) {
+    await showBadge(details.tabId, 'SET', '#8a6116');
+    return;
+  }
+
+  const response = await fetch(`${settings.serverUrl}/policy/evaluate`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${settings.token}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      url: details.url,
+      timestamp: new Date().toISOString(),
+      source: 'chrome-extension'
+    })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || `Server returned ${response.status}`);
+  }
+
+  if (body.decision && body.decision.action === 'block') {
+    const blockUrl = chrome.runtime.getURL(`block.html?${new URLSearchParams({
+      url: details.url,
+      reason: body.decision.reason || 'Blocked by SafeHarbor',
+      ruleId: body.decision.ruleId || '',
+      timestamp: body.decision.timestamp || new Date().toISOString()
+    })}`);
+    await chrome.tabs.update(details.tabId, { url: blockUrl });
+    await showBadge(details.tabId, 'NO', '#a22222');
+    return;
+  }
+
+  await chrome.action.setBadgeText({ text: '', tabId: details.tabId });
+}
+
 async function checkHealth() {
   const settings = await getSettings();
   const response = await fetch(`${settings.serverUrl}/health`);
@@ -149,4 +196,9 @@ async function checkHealth() {
 async function openStatusPage() {
   await chrome.tabs.create({ url: chrome.runtime.getURL('status.html') });
   return { ok: true };
+}
+
+async function showBadge(tabId, text, color) {
+  await chrome.action.setBadgeText({ text, tabId });
+  await chrome.action.setBadgeBackgroundColor({ color, tabId });
 }

@@ -40,12 +40,12 @@ This document captures the phase 1 product foundation so future implementation w
 The next milestone should turn the current capture prototype into a local controls MVP:
 
 1. Establish the platform-neutral development loop.
-2. Add the local SQLite event store.
-3. Add child profiles and local policy.
-4. Implement the testable rule engine.
-5. Add browser enforcement.
-6. Add local reporting.
-7. Harden the local agent.
+2. Add the local SQLite event store. Completed in Phase 2.
+3. Add child profiles and local policy. Completed in Phase 2.
+4. Implement the testable rule engine. Completed in Phase 2.
+5. Add browser enforcement. Completed in Phase 2.
+6. Add local reporting. Completed in Phase 2.
+7. Harden the local agent for local MVP testing. Completed in Phase 2.
 
 The detailed Phase 2 goal structure and acceptance criteria live in [ROADMAP.md](../ROADMAP.md).
 

@@ -4,7 +4,9 @@ const DEFAULT_SERVER_URL = 'http://127.0.0.1:43718';
 
 const refreshButton = document.getElementById('refresh');
 const summaryEl = document.getElementById('summary');
+const metricsEl = document.getElementById('metrics');
 const activityEl = document.getElementById('activity');
+const topDomainsEl = document.getElementById('topDomains');
 const statusEl = document.getElementById('status');
 
 refreshButton.addEventListener('click', loadStatus);
@@ -29,7 +31,9 @@ async function loadStatus() {
     if (!response.ok || !body.ok) throw new Error(body.error || `Server returned ${response.status}`);
 
     renderSummary(body);
+    renderMetrics(body.reports?.counts || {});
     renderActivity(body.recentActivity || []);
+    renderTopDomains(body.reports?.topDomains || []);
     setStatus(`Updated ${new Date().toLocaleTimeString()}.`, '');
   } catch (error) {
     setStatus(error.message, 'error');
@@ -39,9 +43,30 @@ async function loadStatus() {
 function renderSummary(body) {
   summaryEl.replaceChildren(
     summaryRow('Server', `${body.host}:${body.port}`),
-    summaryRow('Captures', body.capturesDir),
+    summaryRow('Database', body.databaseFile),
+    summaryRow('Profile', (body.profiles || []).map(item => item.name).join(', ')),
     summaryRow('Config', body.configFile)
   );
+}
+
+function renderMetrics(counts) {
+  metricsEl.replaceChildren(
+    metric('Total events', counts.totalEvents || 0),
+    metric('Allowed', counts.allowedVisits || 0),
+    metric('Blocked', counts.blockedVisits || 0),
+    metric('Tamper signals', counts.tamperSignals || 0)
+  );
+}
+
+function metric(label, value) {
+  const card = document.createElement('div');
+  card.className = 'metric';
+  const strong = document.createElement('strong');
+  strong.textContent = String(value);
+  const span = document.createElement('span');
+  span.textContent = label;
+  card.append(strong, span);
+  return card;
 }
 
 function summaryRow(label, value) {
@@ -60,8 +85,8 @@ function renderActivity(items) {
   if (!items.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 5;
-    cell.textContent = 'No captures yet.';
+    cell.colSpan = 6;
+    cell.textContent = 'No events yet.';
     row.append(cell);
     activityEl.append(row);
     return;
@@ -72,9 +97,10 @@ function renderActivity(items) {
     row.append(
       td(item.timestamp),
       td(item.type),
+      td(item.decision),
+      td(item.reason),
       td(item.title),
-      urlCell(item.url),
-      td(item.file)
+      urlCell(item.url)
     );
     activityEl.append(row);
   }
@@ -96,6 +122,25 @@ function urlCell(value) {
   link.rel = 'noreferrer';
   cell.append(link);
   return cell;
+}
+
+function renderTopDomains(items) {
+  topDomainsEl.replaceChildren();
+  if (!items.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    cell.textContent = 'No domain activity yet.';
+    row.append(cell);
+    topDomainsEl.append(row);
+    return;
+  }
+
+  for (const item of items) {
+    const row = document.createElement('tr');
+    row.append(td(item.domain), td(item.count));
+    topDomainsEl.append(row);
+  }
 }
 
 function setStatus(text, className) {
