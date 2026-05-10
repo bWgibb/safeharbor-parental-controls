@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Local runtime data
+.safeharbor/
+captures/
+logs/
+activity.json
+config.json
+*.log
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Build and package output
+dist/
+build/
+coverage/
+*.tgz
+*.zip
+

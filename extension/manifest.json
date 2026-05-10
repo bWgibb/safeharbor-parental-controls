@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "SafeHarbor",
+  "version": "0.1.0",
+  "description": "SafeHarbor parental controls companion extension.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SafeHarbor"
+  },
+  "options_page": "options.html"
+}

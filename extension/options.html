@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeHarbor Options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>SafeHarbor Options</h1>
+
+    <label>
+      Server URL
+      <input id="serverUrl" type="url" spellcheck="false" autocomplete="off">
+    </label>
+
+    <label>
+      Token
+      <input id="token" type="password" spellcheck="false" autocomplete="off">
+    </label>
+
+    <div class="actions">
+      <button id="save" class="primary" type="button">Save</button>
+      <button id="showToken" type="button">Show token</button>
+      <button id="health" type="button">Check server</button>
+    </div>
+
+    <p id="status" role="status"></p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeHarbor Status</title>
+  <link rel="stylesheet" href="status.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>SafeHarbor Status</h1>
+      <button id="refresh" type="button">Refresh</button>
+    </header>
+
+    <section id="summary"></section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Type</th>
+          <th>Title</th>
+          <th>URL</th>
+          <th>File</th>
+        </tr>
+      </thead>
+      <tbody id="activity"></tbody>
+    </table>
+
+    <p id="status" role="status"></p>
+  </main>
+  <script src="status.js"></script>
+</body>
+</html>

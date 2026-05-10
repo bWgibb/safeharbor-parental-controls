@@ -1,0 +1,16 @@
+{
+  "name": "safeharbor-parental-controls",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SafeHarbor parental controls prototype with a local agent and Chrome extension.",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/safeharbor-server.js",
+    "token": "node server/safeharbor-server.js --show-token",
+    "config": "node server/safeharbor-server.js --print-config",
+    "check": "node --check server/safeharbor-server.js && node --check extension/background.js && node --check extension/popup.js && node --check extension/options.js && node --check extension/status.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

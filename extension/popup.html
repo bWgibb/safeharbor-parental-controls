@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SafeHarbor</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>SafeHarbor</h1>
+      <button id="options" type="button" title="Options">Options</button>
+    </header>
+
+    <label class="check">
+      <input id="readable" type="checkbox">
+      Include readable page text
+    </label>
+
+    <button id="send" class="primary" type="button">Send current page</button>
+
+    <div class="row">
+      <button id="health" type="button">Check server</button>
+      <button id="statusPage" type="button">Status</button>
+    </div>
+
+    <p id="status" role="status"></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
