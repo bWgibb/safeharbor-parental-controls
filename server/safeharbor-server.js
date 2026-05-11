@@ -19,6 +19,8 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RECENT_ACTIVITY = 50;
 const ENROLLMENT_CODE_MINUTES = 15;
 const DEFAULT_HUB_SYNC_INTERVAL_MS = 60 * 1000;
+const DEFAULT_HUB_SYNC_TIMEOUT_MS = 10 * 1000;
+const MAX_HUB_SYNC_BACKOFF_MS = 5 * 60 * 1000;
 const REGINA_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Regina',
   year: 'numeric',
@@ -928,7 +930,9 @@ async function handleSyncEvents(req, res) {
   const accepted = [];
   let duplicates = 0;
   const seenDeviceIds = new Set();
-  for (const event of events.slice(0, 100)) {
+  let lastLocalEventId = null;
+  const processedEvents = events.slice(0, 100);
+  for (const event of processedEvents) {
     const timestamp = asString(event.timestamp, nowIso());
     const deviceId = asString(event.deviceId, bodyDeviceId);
     if (scope !== 'parent' && deviceId !== bodyDeviceId) {
@@ -939,6 +943,7 @@ async function handleSyncEvents(req, res) {
     const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
     const rawLocalEventId = event.localEventId ?? metadata.localEventId ?? event.id;
     const localEventId = rawLocalEventId == null ? '' : String(rawLocalEventId);
+    lastLocalEventId = localEventId;
     const eventKey = deviceId && localEventId ? `${deviceId}:${localEventId}` : '';
     const result = store.recordEvent({
       type: asString(event.type, 'sync_event'),
@@ -967,7 +972,15 @@ async function handleSyncEvents(req, res) {
     store.markDeviceSynced(deviceId, serverTime);
   }
 
-  sendJson(res, 202, { ok: true, accepted: accepted.length, duplicates, serverTime });
+  sendJson(res, 202, {
+    ok: true,
+    batchId: asString(body.batchId),
+    received: processedEvents.length,
+    accepted: accepted.length,
+    duplicates,
+    lastLocalEventId,
+    serverTime
+  });
 }
 
 function syncPolicyBody(deviceId) {
@@ -1122,8 +1135,29 @@ function hubSyncSettings() {
   return {
     url: hubUrl,
     token,
-    intervalMs: Math.max(5000, Number(process.env.SAFEHARBOR_HUB_SYNC_INTERVAL_MS || DEFAULT_HUB_SYNC_INTERVAL_MS))
+    intervalMs: Math.max(5000, Number(process.env.SAFEHARBOR_HUB_SYNC_INTERVAL_MS || DEFAULT_HUB_SYNC_INTERVAL_MS)),
+    timeoutMs: Math.max(1000, Number(process.env.SAFEHARBOR_HUB_SYNC_TIMEOUT_MS || DEFAULT_HUB_SYNC_TIMEOUT_MS))
   };
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = DEFAULT_HUB_SYNC_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    const body = await response.json().catch(() => ({}));
+    return { response, body };
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error(`Hub request timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function runHubSync() {
@@ -1139,8 +1173,7 @@ async function runHubSync() {
   };
 
   const policyUrl = `${hub.url}/sync/policy?deviceId=${encodeURIComponent(deviceId)}`;
-  const policyResponse = await fetch(policyUrl, { headers });
-  const policyBody = await policyResponse.json().catch(() => ({}));
+  const { response: policyResponse, body: policyBody } = await fetchJsonWithTimeout(policyUrl, { headers }, hub.timeoutMs);
   if (!policyResponse.ok || !policyBody.ok) {
     throw new Error(policyBody.error || `Hub policy sync returned ${policyResponse.status}`);
   }
@@ -1159,10 +1192,12 @@ async function runHubSync() {
     return;
   }
 
-  const eventsResponse = await fetch(`${hub.url}/sync/events`, {
+  const batchId = crypto.randomUUID();
+  const { response: eventsResponse, body: eventsBody } = await fetchJsonWithTimeout(`${hub.url}/sync/events`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
+      batchId,
       deviceId,
       profileId: activeDevice.profileId || profile.id,
       device: {
@@ -1179,13 +1214,20 @@ async function runHubSync() {
         metadata: {
           ...(event.metadata || {}),
           localEventId: event.id
-        }
+        },
+        localEventId: event.id
       }))
     })
-  });
-  const eventsBody = await eventsResponse.json().catch(() => ({}));
+  }, hub.timeoutMs);
   if (!eventsResponse.ok || !eventsBody.ok) {
     throw new Error(eventsBody.error || `Hub event sync returned ${eventsResponse.status}`);
+  }
+  const confirmed = eventsBody.batchId === batchId
+    && Number(eventsBody.received) === events.length
+    && Number(eventsBody.accepted || 0) + Number(eventsBody.duplicates || 0) === events.length
+    && Number(eventsBody.lastLocalEventId) === events[events.length - 1].id;
+  if (!confirmed) {
+    throw new Error('Hub event sync acknowledgement did not match the sent batch.');
   }
 
   config.hubLastEventId = events[events.length - 1].id;
@@ -1200,18 +1242,51 @@ async function runHubSync() {
 }
 
 let hubSyncTimer = null;
+let hubSyncInFlight = false;
+let hubSyncBackoffMs = 0;
+
+function nextHubSyncBackoff() {
+  if (!hubSyncBackoffMs) return 5000;
+  return Math.min(hubSyncBackoffMs * 2, MAX_HUB_SYNC_BACKOFF_MS);
+}
+
+function scheduleHubSync(delayMs) {
+  if (hubSyncTimer) clearTimeout(hubSyncTimer);
+  hubSyncTimer = setTimeout(runScheduledHubSync, delayMs);
+  hubSyncTimer.unref();
+}
+
+function runScheduledHubSync() {
+  const hub = hubSyncSettings();
+  if (!hub) return;
+  if (hubSyncInFlight) {
+    logEvent('warn', 'hub_sync_skipped_in_flight');
+    scheduleHubSync(hub.intervalMs);
+    return;
+  }
+
+  hubSyncInFlight = true;
+  runHubSync()
+    .then(() => {
+      hubSyncBackoffMs = 0;
+      scheduleHubSync(hub.intervalMs);
+    })
+    .catch(error => {
+      hubSyncBackoffMs = nextHubSyncBackoff();
+      config.hubLastSyncError = error.message;
+      writeJson(paths.config, config);
+      logEvent('error', 'hub_sync_failed', { error: error.message, retryInMs: hubSyncBackoffMs });
+      scheduleHubSync(hubSyncBackoffMs);
+    })
+    .finally(() => {
+      hubSyncInFlight = false;
+    });
+}
 
 function startHubSync() {
   const hub = hubSyncSettings();
   if (!hub) return;
-  const run = () => runHubSync().catch(error => {
-    config.hubLastSyncError = error.message;
-    writeJson(paths.config, config);
-    logEvent('error', 'hub_sync_failed', { error: error.message });
-  });
-  hubSyncTimer = setInterval(run, hub.intervalMs);
-  hubSyncTimer.unref();
-  run();
+  scheduleHubSync(0);
 }
 
 const server = http.createServer(async (req, res) => {

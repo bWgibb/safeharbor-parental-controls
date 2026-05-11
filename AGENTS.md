@@ -85,7 +85,7 @@ npm test
 sh -n scripts/install-raspberry-pi.sh
 ```
 
-Current test coverage includes rule engine behavior, SQLite/event-store behavior, server smoke paths, auth scope checks, exports, alerts, revocation, and a headless hub-plus-child-agent sync process.
+Current test coverage includes rule engine behavior, SQLite/event-store behavior, server smoke paths, auth scope checks, exports, alerts, revocation, sync timeout handling, and a headless hub-plus-child-agent sync process.
 
 ## Open Work
 

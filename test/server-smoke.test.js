@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -116,6 +117,8 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
     });
     assert.equal(synced.accepted, 2);
     assert.equal(synced.duplicates, 0);
+    assert.equal(synced.received, 2);
+    assert.equal(synced.lastLocalEventId, 'visit-2');
 
     const duplicateSync = await postJson(`${baseUrl}/sync/events`, enrolled.deviceToken, {
       deviceId: 'windows-test-device',
@@ -146,6 +149,7 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
     });
     assert.equal(duplicateSync.accepted, 0);
     assert.equal(duplicateSync.duplicates, 2);
+    assert.equal(duplicateSync.received, 2);
 
     const reports = await getJson(`${baseUrl}/reports/local`, config.token);
     const deviceSummary = reports.reports.deviceSummary.find(item => item.deviceId === 'windows-test-device');
@@ -296,6 +300,39 @@ test('server can bind to a LAN hub host', async () => {
   }
 });
 
+test('child hub sync records timeout errors without blocking startup', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'safeharbor-hub-timeout-'));
+  const port = String(49180 + Math.floor(Math.random() * 1000));
+  const hungHub = http.createServer(() => {});
+  await listen(hungHub);
+  const hubUrl = `http://127.0.0.1:${hungHub.address().port}`;
+  const child = spawn(process.execPath, ['server/safeharbor-server.js'], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env,
+      SAFEHARBOR_HOME: home,
+      PORT: port,
+      SAFEHARBOR_HUB_URL: hubUrl,
+      SAFEHARBOR_HUB_TOKEN: '0'.repeat(64),
+      SAFEHARBOR_HUB_SYNC_TIMEOUT_MS: '1000',
+      SAFEHARBOR_HUB_SYNC_INTERVAL_MS: '5000'
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  try {
+    await waitForOutput(child, 'listening');
+    await waitFor(() => {
+      const config = JSON.parse(fs.readFileSync(path.join(home, 'config.json'), 'utf8'));
+      return /timed out/.test(config.hubLastSyncError || '');
+    }, 5000);
+  } finally {
+    child.kill('SIGTERM');
+    await waitForExit(child);
+    await closeServer(hungHub);
+  }
+});
+
 function waitForOutput(child, pattern) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timed out waiting for ${pattern}`)), 6000);
@@ -326,6 +363,14 @@ function waitForExit(child) {
     child.on('exit', resolve);
     setTimeout(resolve, 1000);
   });
+}
+
+function listen(server) {
+  return new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+}
+
+function closeServer(server) {
+  return new Promise(resolve => server.close(resolve));
 }
 
 async function waitFor(check, timeoutMs = 7000) {
