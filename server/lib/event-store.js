@@ -339,6 +339,39 @@ class EventStore {
     `).run(deviceId, enrollmentId);
   }
 
+  enrollDevice(codeHash, device, usedAt = new Date().toISOString()) {
+    const transaction = this.db.transaction(() => {
+      const enrollment = this.db.prepare(`
+        SELECT id, profile_id AS profileId, expires_at AS expiresAt, used_at AS usedAt
+        FROM enrollment_codes
+        WHERE code_hash = ?
+          AND used_at IS NULL
+          AND expires_at >= ?
+      `).get(codeHash, usedAt);
+      if (!enrollment) return null;
+
+      this.upsertDevice({
+        ...device,
+        profileId: enrollment.profileId,
+        lastSeenAt: device.lastSeenAt || usedAt
+      }, { clearRevocation: true });
+
+      const result = this.db.prepare(`
+        UPDATE enrollment_codes
+        SET used_at = ?, used_by_device_id = ?
+        WHERE id = ? AND used_at IS NULL
+      `).run(usedAt, device.id, enrollment.id);
+      if (result.changes !== 1) return null;
+
+      return {
+        ...enrollment,
+        usedAt,
+        usedByDeviceId: device.id
+      };
+    });
+    return transaction();
+  }
+
   recentEnrollmentCodes(limit = 10) {
     return this.db.prepare(`
       SELECT

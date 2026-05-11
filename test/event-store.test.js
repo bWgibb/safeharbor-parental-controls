@@ -113,28 +113,29 @@ test('creates enrollment codes and registers devices', () => {
     expiresAt: '2026-05-10T12:15:00.000Z'
   });
 
-  const enrollment = store.consumeEnrollmentCode(
-    'hash-123',
-    'device-test',
-    '2026-05-10T12:01:00.000Z'
-  );
-  assert.equal(enrollment.profileId, 'default-child');
-
-  store.upsertDevice({
+  const enrollment = store.enrollDevice('hash-123', {
     id: 'device-test',
     name: 'Test Device',
     platform: 'win32',
-    profileId: enrollment.profileId,
     createdAt: '2026-05-10T12:01:00.000Z',
     lastSeenAt: '2026-05-10T12:01:00.000Z',
     deviceTokenHash: 'hash-device-test'
-  });
-  store.completeEnrollmentCode(enrollment.id, 'device-test');
+  }, '2026-05-10T12:01:00.000Z');
+  assert.equal(enrollment.profileId, 'default-child');
+  assert.equal(enrollment.usedByDeviceId, 'device-test');
 
   assert.equal(store.getDevice('device-test').name, 'Test Device');
   assert.equal(store.getDeviceAuth('device-test').deviceTokenHash, 'hash-device-test');
   assert.equal(store.consumeEnrollmentCode('hash-123', 'other-device'), null);
   assert.equal(store.recentEnrollmentCodes()[0].usedByDeviceId, 'device-test');
+  assert.equal(store.enrollDevice('hash-123', {
+    id: 'other-device',
+    name: 'Other Device',
+    platform: 'win32',
+    createdAt: '2026-05-10T12:02:00.000Z',
+    deviceTokenHash: 'hash-other'
+  }, '2026-05-10T12:02:00.000Z'), null);
+  assert.equal(store.getDevice('other-device'), null);
 
   store.close();
 });

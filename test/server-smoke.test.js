@@ -165,6 +165,7 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
 
     const backup = await getText(`${baseUrl}/backup/safeharbor.sqlite`, config.token);
     assert.ok(backup.length > 100);
+    assert.equal(fs.readdirSync(home).some(file => file.startsWith('safeharbor-backup-')), false);
 
     const policyExport = await getJson(`${baseUrl}/policy/export.json`, config.token);
     assert.equal(policyExport.policy.id, 'default-policy');

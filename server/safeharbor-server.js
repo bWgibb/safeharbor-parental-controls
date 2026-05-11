@@ -576,25 +576,22 @@ async function handleDeviceEnroll(req, res) {
   }
 
   const deviceId = asString(body.deviceId, `device-${crypto.randomUUID()}`);
-  const enrollment = store.consumeEnrollmentCode(hashEnrollmentCode(code), deviceId);
-  if (!enrollment) {
-    sendJson(res, 400, { ok: false, error: 'invalid_or_expired_enrollment_code' });
-    return;
-  }
-
   const timestamp = nowIso();
   const deviceToken = crypto.randomBytes(32).toString('hex');
   const device = {
     id: deviceId,
     name: asString(body.name, 'Enrolled Device'),
     platform: asString(body.platform, 'unknown'),
-    profileId: enrollment.profileId,
     createdAt: timestamp,
     lastSeenAt: timestamp,
     deviceTokenHash: hashDeviceToken(deviceToken)
   };
-  store.upsertDevice(device, { clearRevocation: true });
-  store.completeEnrollmentCode(enrollment.id, deviceId);
+  const enrollment = store.enrollDevice(hashEnrollmentCode(code), device, timestamp);
+  if (!enrollment) {
+    sendJson(res, 400, { ok: false, error: 'invalid_or_expired_enrollment_code' });
+    return;
+  }
+
   const policyRecord = store.getPolicyRecord(enrollment.profileId);
   store.recordEvent({
     type: 'device_enrolled',
@@ -859,13 +856,36 @@ async function handleBackup(req, res) {
   if (!requireParent(req, res)) return;
 
   const backupFile = path.join(paths.baseDir, `safeharbor-backup-${safeFileStamp()}.sqlite`);
-  await store.backupTo(backupFile);
-  res.writeHead(200, {
-    'content-type': 'application/vnd.sqlite3',
-    'cache-control': 'no-store',
-    'content-disposition': 'attachment; filename="safeharbor-backup.sqlite"'
+  try {
+    await store.backupTo(backupFile);
+    await streamBackup(res, backupFile);
+  } finally {
+    fs.rmSync(backupFile, { force: true });
+  }
+}
+
+function streamBackup(res, backupFile) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const stream = fs.createReadStream(backupFile);
+    const done = error => {
+      if (settled) return;
+      settled = true;
+      stream.destroy();
+      if (error) reject(error);
+      else resolve();
+    };
+
+    stream.on('error', done);
+    res.on('finish', () => done());
+    res.on('close', () => done());
+    res.writeHead(200, {
+      'content-type': 'application/vnd.sqlite3',
+      'cache-control': 'no-store',
+      'content-disposition': 'attachment; filename="safeharbor-backup.sqlite"'
+    });
+    stream.pipe(res);
   });
-  fs.createReadStream(backupFile).pipe(res);
 }
 
 function hubSyncSettings() {
