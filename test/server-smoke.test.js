@@ -54,20 +54,40 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
     });
     assert.equal(enrolled.device.id, 'windows-test-device');
     assert.equal(enrolled.device.profileId, 'default-child');
-    assert.equal(enrolled.deviceToken, config.deviceToken);
+    assert.match(enrolled.deviceToken, /^[a-f0-9]{64}$/);
+    assert.notEqual(enrolled.deviceToken, config.deviceToken);
 
-    const syncPolicy = await getJson(`${baseUrl}/sync/policy?deviceId=windows-test-device`, config.deviceToken);
+    const syncPolicy = await getJson(`${baseUrl}/sync/policy?deviceId=windows-test-device`, enrolled.deviceToken);
     assert.equal(syncPolicy.device.id, 'windows-test-device');
     assert.equal(syncPolicy.policy.id, 'default-policy');
 
-    const heartbeat = await postJson(`${baseUrl}/devices/heartbeat`, config.deviceToken, {
+    const spoofedPolicy = await fetch(`${baseUrl}/sync/policy?deviceId=spoofed-device`, {
+      headers: { authorization: `Bearer ${enrolled.deviceToken}` }
+    });
+    assert.equal(spoofedPolicy.status, 403);
+
+    const heartbeat = await postJson(`${baseUrl}/devices/heartbeat`, enrolled.deviceToken, {
       deviceId: 'windows-test-device',
       version: '0.2.0',
       platform: 'win32'
     });
     assert.equal(heartbeat.device.status, 'online');
 
-    const synced = await postJson(`${baseUrl}/sync/events`, config.deviceToken, {
+    const spoofedEvents = await fetch(`${baseUrl}/sync/events`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${enrolled.deviceToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        deviceId: 'spoofed-device',
+        profileId: 'default-child',
+        events: [{ localEventId: 'spoof-1', type: 'visit_decision', timestamp: '2026-05-10T12:09:00.000Z' }]
+      })
+    });
+    assert.equal(spoofedEvents.status, 403);
+
+    const synced = await postJson(`${baseUrl}/sync/events`, enrolled.deviceToken, {
       deviceId: 'windows-test-device',
       profileId: 'default-child',
       events: [
@@ -97,7 +117,7 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
     assert.equal(synced.accepted, 2);
     assert.equal(synced.duplicates, 0);
 
-    const duplicateSync = await postJson(`${baseUrl}/sync/events`, config.deviceToken, {
+    const duplicateSync = await postJson(`${baseUrl}/sync/events`, enrolled.deviceToken, {
       deviceId: 'windows-test-device',
       profileId: 'default-child',
       events: [
@@ -170,7 +190,7 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
     assert.equal(revoked.device.status, 'revoked');
 
     const revokedPolicy = await fetch(`${baseUrl}/sync/policy?deviceId=windows-test-device`, {
-      headers: { authorization: `Bearer ${config.deviceToken}` }
+      headers: { authorization: `Bearer ${enrolled.deviceToken}` }
     });
     assert.equal(revokedPolicy.status, 403);
   } finally {
@@ -196,6 +216,15 @@ test('child agent syncs local events to a hub process', async () => {
     await waitForOutput(hub, 'listening');
     const hubConfig = JSON.parse(fs.readFileSync(path.join(hubHome, 'config.json'), 'utf8'));
     const hubUrl = `http://127.0.0.1:${hubPort}`;
+    const enrollmentCode = await postJson(`${hubUrl}/enrollment/code`, hubConfig.token, {
+      profileId: 'default-child'
+    });
+    const enrolled = await postJsonWithoutToken(`${hubUrl}/devices/enroll`, {
+      code: enrollmentCode.code,
+      deviceId: 'child-agent-1',
+      name: 'Child Agent 1',
+      platform: 'test'
+    });
 
     child = spawn(process.execPath, ['server/safeharbor-server.js'], {
       cwd: root,
@@ -221,7 +250,7 @@ test('child agent syncs local events to a hub process', async () => {
         SAFEHARBOR_HOME: childHome,
         PORT: childPort,
         SAFEHARBOR_HUB_URL: hubUrl,
-        SAFEHARBOR_HUB_TOKEN: hubConfig.deviceToken,
+        SAFEHARBOR_HUB_TOKEN: enrolled.deviceToken,
         SAFEHARBOR_DEVICE_ID: 'child-agent-1',
         SAFEHARBOR_HUB_SYNC_INTERVAL_MS: '5000'
       },

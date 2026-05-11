@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 class EventStore {
   constructor(databaseFile) {
@@ -34,6 +34,7 @@ class EventStore {
         revoked_at TEXT,
         revoked_reason TEXT,
         last_sync_at TEXT,
+        device_token_hash TEXT,
         FOREIGN KEY (profile_id) REFERENCES profiles(id)
       );
 
@@ -108,6 +109,7 @@ class EventStore {
     this.ensureColumn('devices', 'revoked_at', 'TEXT');
     this.ensureColumn('devices', 'revoked_reason', 'TEXT');
     this.ensureColumn('devices', 'last_sync_at', 'TEXT');
+    this.ensureColumn('devices', 'device_token_hash', 'TEXT');
     this.ensureColumn('events', 'event_key', 'TEXT');
     this.ensureColumn('alerts', 'delivered_at', 'TEXT');
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_key ON events(event_key) WHERE event_key IS NOT NULL;');
@@ -193,14 +195,25 @@ class EventStore {
     return row ? { ...row, status: deviceStatus(row.lastSeenAt, row.revokedAt) } : null;
   }
 
+  getDeviceAuth(deviceId) {
+    return this.db.prepare(`
+      SELECT
+        id, revoked_at AS revokedAt, device_token_hash AS deviceTokenHash
+      FROM devices
+      WHERE id = ?
+    `).get(deviceId) || null;
+  }
+
   upsertDevice(device, options = {}) {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO devices (
-        id, name, platform, profile_id, created_at, last_seen_at, revoked_at, revoked_reason, last_sync_at
+        id, name, platform, profile_id, created_at, last_seen_at,
+        revoked_at, revoked_reason, last_sync_at, device_token_hash
       )
       VALUES (
-        @id, @name, @platform, @profileId, @createdAt, @lastSeenAt, NULL, NULL, @lastSyncAt
+        @id, @name, @platform, @profileId, @createdAt, @lastSeenAt,
+        NULL, NULL, @lastSyncAt, @deviceTokenHash
       )
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
@@ -209,7 +222,8 @@ class EventStore {
         last_seen_at = excluded.last_seen_at,
         revoked_at = CASE WHEN @clearRevocation = 1 THEN NULL ELSE devices.revoked_at END,
         revoked_reason = CASE WHEN @clearRevocation = 1 THEN NULL ELSE devices.revoked_reason END,
-        last_sync_at = COALESCE(@lastSyncAt, devices.last_sync_at)
+        last_sync_at = COALESCE(@lastSyncAt, devices.last_sync_at),
+        device_token_hash = COALESCE(@deviceTokenHash, devices.device_token_hash)
     `).run({
       id: device.id,
       name: device.name,
@@ -218,8 +232,16 @@ class EventStore {
       createdAt: device.createdAt || now,
       lastSeenAt: device.lastSeenAt || now,
       lastSyncAt: device.lastSyncAt || null,
+      deviceTokenHash: device.deviceTokenHash || null,
       clearRevocation: options.clearRevocation ? 1 : 0
     });
+  }
+
+  setDeviceTokenHash(deviceId, tokenHash, options = {}) {
+    const sql = options.onlyIfMissing
+      ? 'UPDATE devices SET device_token_hash = ? WHERE id = ? AND device_token_hash IS NULL'
+      : 'UPDATE devices SET device_token_hash = ? WHERE id = ?';
+    return this.db.prepare(sql).run(tokenHash, deviceId).changes > 0;
   }
 
   revokeDevice(deviceId, reason = 'Revoked by parent', timestamp = new Date().toISOString()) {

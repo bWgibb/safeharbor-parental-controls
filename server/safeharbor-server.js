@@ -158,6 +158,7 @@ store.seed({
   device: defaultDevice(),
   policy: defaultPolicy()
 });
+store.setDeviceTokenHash(defaultDevice().id, hashDeviceToken(config.deviceToken), { onlyIfMissing: true });
 
 if (args.has('--print-config')) {
   process.stdout.write(JSON.stringify(configBody(), null, 2) + '\n');
@@ -267,17 +268,23 @@ function forbidden(res, error) {
   sendJson(res, 403, { ok: false, error });
 }
 
-function authScope(req) {
+function bearerToken(req) {
   const value = req.headers.authorization || '';
   const prefix = 'Bearer ';
   if (!value.startsWith(prefix)) return '';
-  const received = Buffer.from(value.slice(prefix.length));
+  return value.slice(prefix.length);
+}
+
+function authScope(req) {
+  const token = bearerToken(req);
+  if (!token) return '';
+  const received = Buffer.from(token);
   const parent = Buffer.from(config.parentToken);
   if (received.length === parent.length && crypto.timingSafeEqual(received, parent)) return 'parent';
   const legacy = Buffer.from(config.token);
   if (received.length === legacy.length && crypto.timingSafeEqual(received, legacy)) return 'parent';
   const device = Buffer.from(config.deviceToken);
-  if (received.length === device.length && crypto.timingSafeEqual(received, device)) return 'device';
+  if (received.length === device.length && crypto.timingSafeEqual(received, device)) return 'legacy-device';
   return '';
 }
 
@@ -531,6 +538,44 @@ function requireDeviceOrParent(req, res) {
   return false;
 }
 
+function hashDeviceToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function tokenMatchesHash(token, expectedHash) {
+  if (!token || !expectedHash) return false;
+  const actual = Buffer.from(hashDeviceToken(token));
+  const expected = Buffer.from(expectedHash);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function requireDeviceForIdOrParent(req, res, deviceId, options = {}) {
+  const scope = authScope(req);
+  if (scope === 'parent') return true;
+  const token = bearerToken(req);
+  if (!token) {
+    unauthorized(res);
+    return false;
+  }
+  if (!deviceId) {
+    sendJson(res, 400, { ok: false, error: 'device_id_required' });
+    return false;
+  }
+  const device = store.getDeviceAuth(deviceId);
+  if (!device) {
+    sendJson(res, options.unknownStatusCode || 403, { ok: false, error: 'device_not_enrolled' });
+    return false;
+  }
+  if (device.revokedAt) {
+    forbidden(res, 'device_revoked');
+    return false;
+  }
+  if (tokenMatchesHash(token, device.deviceTokenHash)) return true;
+  if (scope === 'legacy-device' && deviceId === defaultDevice().id) return true;
+  forbidden(res, 'device_token_mismatch');
+  return false;
+}
+
 function parseReportFilters(searchParams) {
   const dateFrom = asString(searchParams.get('dateFrom'));
   const dateTo = asString(searchParams.get('dateTo'));
@@ -638,12 +683,12 @@ async function handleCapture(req, res, fallbackType) {
 }
 
 async function handleEvaluate(req, res) {
-  if (!requireDeviceOrParent(req, res)) return;
-
   const body = await readBody(req);
   const { profile, device, policy } = getDefaultContext();
   const profileId = asString(body.profileId, profile.id);
   const deviceId = asString(body.deviceId, device.id);
+  if (!requireDeviceForIdOrParent(req, res, deviceId)) return;
+
   const activePolicy = store.getPolicy(profileId) || policy;
   const decision = evaluatePolicy({
     url: asString(body.url),
@@ -701,8 +746,6 @@ async function handleAction(req, res) {
 }
 
 async function handleEvent(req, res) {
-  if (!requireDeviceOrParent(req, res)) return;
-
   const body = await readBody(req);
   const type = asString(body.type);
   if (!type) {
@@ -712,6 +755,9 @@ async function handleEvent(req, res) {
 
   const { profile, device } = getDefaultContext();
   const timestamp = asString(body.timestamp, nowIso());
+  const deviceId = asString(body.deviceId, device.id);
+  if (!requireDeviceForIdOrParent(req, res, deviceId)) return;
+
   store.recordEvent({
     type,
     timestamp,
@@ -719,7 +765,7 @@ async function handleEvent(req, res) {
     domain: asString(body.domain) || domainFromUrl(asString(body.url)),
     title: asString(body.title),
     profileId: asString(body.profileId, profile.id),
-    deviceId: asString(body.deviceId, device.id),
+    deviceId,
     decision: asString(body.decision),
     ruleId: asString(body.ruleId),
     reason: asString(body.reason),
@@ -786,13 +832,15 @@ async function handleDeviceEnroll(req, res) {
   }
 
   const timestamp = nowIso();
+  const deviceToken = crypto.randomBytes(32).toString('hex');
   const device = {
     id: deviceId,
     name: asString(body.name, 'Enrolled Device'),
     platform: asString(body.platform, 'unknown'),
     profileId: enrollment.profileId,
     createdAt: timestamp,
-    lastSeenAt: timestamp
+    lastSeenAt: timestamp,
+    deviceTokenHash: hashDeviceToken(deviceToken)
   };
   store.upsertDevice(device, { clearRevocation: true });
   store.completeEnrollmentCode(enrollment.id, deviceId);
@@ -808,7 +856,7 @@ async function handleDeviceEnroll(req, res) {
   sendJson(res, 201, {
     ok: true,
     device: store.getDevice(deviceId),
-    deviceToken: config.deviceToken,
+    deviceToken,
     profileId: enrollment.profileId,
     policy: policyRecord ? policyRecord.policy : null,
     policyUpdatedAt: policyRecord ? policyRecord.updatedAt : null,
@@ -817,11 +865,11 @@ async function handleDeviceEnroll(req, res) {
 }
 
 async function handleHeartbeat(req, res) {
-  if (!requireDeviceOrParent(req, res)) return;
-
   const body = await readBody(req);
   const { device } = getDefaultContext();
   const deviceId = asString(body.deviceId, device.id);
+  if (!requireDeviceForIdOrParent(req, res, deviceId)) return;
+
   const timestamp = nowIso();
   const existingDevice = store.getDevice(deviceId);
   if (existingDevice && existingDevice.revokedAt) {
@@ -853,8 +901,6 @@ async function handleHeartbeat(req, res) {
 }
 
 async function handleSyncEvents(req, res) {
-  if (!requireDeviceOrParent(req, res)) return;
-
   const body = await readBody(req);
   const events = Array.isArray(body.events) ? body.events : [];
   if (!events.length) {
@@ -866,10 +912,8 @@ async function handleSyncEvents(req, res) {
   const syncedDevice = body.device && typeof body.device === 'object' ? body.device : null;
   const bodyDeviceId = asString(body.deviceId, syncedDevice ? syncedDevice.id : '');
   const bodyProfileId = asString(body.profileId, syncedDevice ? syncedDevice.profileId : '');
-  if (bodyDeviceId && deviceIsRevoked(bodyDeviceId)) {
-    forbidden(res, 'device_revoked');
-    return;
-  }
+  if (!requireDeviceForIdOrParent(req, res, bodyDeviceId, { unknownStatusCode: 403 })) return;
+  const scope = authScope(req);
   if (bodyDeviceId && !store.getDevice(bodyDeviceId)) {
     store.upsertDevice({
       id: bodyDeviceId,
@@ -887,6 +931,10 @@ async function handleSyncEvents(req, res) {
   for (const event of events.slice(0, 100)) {
     const timestamp = asString(event.timestamp, nowIso());
     const deviceId = asString(event.deviceId, bodyDeviceId);
+    if (scope !== 'parent' && deviceId !== bodyDeviceId) {
+      sendJson(res, 403, { ok: false, error: 'event_device_mismatch' });
+      return;
+    }
     const profileId = asString(event.profileId, bodyProfileId);
     const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
     const rawLocalEventId = event.localEventId ?? metadata.localEventId ?? event.id;
@@ -967,6 +1015,7 @@ async function handleTokenRotate(req, res) {
   config.token = config.parentToken;
   if (body.rotateDeviceToken === true || asString(body.rotateDeviceToken) === 'true') {
     config.deviceToken = crypto.randomBytes(32).toString('hex');
+    store.setDeviceTokenHash(defaultDevice().id, hashDeviceToken(config.deviceToken));
   }
   writeJson(paths.config, config);
   logEvent('info', 'token_rotated');
@@ -1270,9 +1319,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && parsed.pathname === '/sync/policy') {
-      if (!requireDeviceOrParent(req, res)) return;
       const { device } = getDefaultContext();
-      const body = syncPolicyBody(asString(parsed.searchParams.get('deviceId'), device.id));
+      const deviceId = asString(parsed.searchParams.get('deviceId'), device.id);
+      if (!requireDeviceForIdOrParent(req, res, deviceId)) return;
+      const body = syncPolicyBody(deviceId);
       sendJson(res, body.ok ? 200 : 403, body);
       return;
     }

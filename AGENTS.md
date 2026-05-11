@@ -14,17 +14,18 @@
 
 - Keep browser enforcement local on each child device.
 - Use the Raspberry Pi as the home hub for parent dashboard, policy source of truth, central SQLite reporting, alerts, backups, enrollment, and multi-device aggregation.
-- Child devices should sync to the hub with the device token, but still enforce the last known policy locally.
+- Child devices should sync to the hub with their enrolled per-device token, but still enforce the last known policy locally.
 - Do not expose port `43718` to the internet. Use LAN-only access for now.
 
 ## Token Scopes
 
 - Parent token: `npm run token`
   - Use for dashboard/admin actions: `/status`, reports, exports, backups, policy edits, enrollment code creation, device revocation, alert resolution.
-- Device token: `npm run device-token`
-  - Use for child-agent operations: policy pull, event upload, heartbeat, URL evaluation, tamper/event ingestion.
+- Device token: returned by `/devices/enroll`
+  - Use only for that enrolled device's child-agent operations: policy pull, event upload, heartbeat, URL evaluation, tamper/event ingestion.
+  - `npm run device-token` prints the legacy local-device token for local smoke tests.
 
-On the Pi, print tokens with:
+On the Pi, print the parent token and legacy local-device token with:
 
 ```sh
 sudo -u "$USER" env SAFEHARBOR_HOME=/var/lib/safeharbor node /opt/safeharbor/server/safeharbor-server.js --show-token

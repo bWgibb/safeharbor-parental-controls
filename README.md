@@ -138,7 +138,7 @@ http://homeautomation.local:43718/dashboard
    sudo -u "$USER" env SAFEHARBOR_HOME=/var/lib/safeharbor node server/safeharbor-server.js --show-token
    ```
 
-   Print the hub device token for child-agent sync:
+   Print the legacy local-device token only for local smoke tests:
 
    ```sh
    sudo -u "$USER" env SAFEHARBOR_HOME=/var/lib/safeharbor node server/safeharbor-server.js --show-device-token
@@ -165,15 +165,15 @@ For a child device, prefer keeping the extension pointed at its local agent for 
 http://127.0.0.1:43718
 ```
 
-Then run the local child agent with hub sync enabled:
+Generate a pairing code from the dashboard, enroll the child device, and use the enrolled device token returned by `/devices/enroll`. Then run the local child agent with hub sync enabled:
 
 ```sh
-SAFEHARBOR_HUB_URL=http://safeharbor.local:43718 \
-SAFEHARBOR_HUB_TOKEN=<hub-device-token> \
+SAFEHARBOR_HUB_URL=http://homeautomation.local:43718 \
+SAFEHARBOR_HUB_TOKEN=<enrolled-device-token> \
 npm start
 ```
 
-With hub sync enabled, the child agent periodically pulls policy from the Pi and uploads local events into the central hub database. This keeps browser decisions local while still giving the Pi dashboard multi-device reporting.
+With hub sync enabled, the child agent periodically pulls policy from the Pi and uploads local events into the central hub database. Device-scoped sync requires the token issued for that enrolled device, so revoking a device prevents it from syncing until it is re-enrolled.
 
 To test the hub without Windows or a browser extension, run the simulator from another terminal:
 
@@ -266,7 +266,7 @@ Authorization: Bearer <local-token>
 There are two local token scopes:
 
 - Parent token: printed by `npm run token`; required for dashboard, policy edits, reports, exports, backups, revocation, and token rotation.
-- Device token: printed by `npm run device-token`; allowed only for child-agent style operations such as policy pull, heartbeat, event upload, local URL evaluation, and tamper/event ingestion.
+- Device token: issued during device enrollment and allowed only for that device's child-agent operations such as policy pull, heartbeat, event upload, local URL evaluation, and tamper/event ingestion. `npm run device-token` prints the legacy local-device token for local smoke tests.
 
 ## Safety Defaults
 
@@ -312,7 +312,7 @@ These APIs support the Raspberry Pi/home-hub model and act as the local test-dri
 Child agents can sync to a hub with:
 
 - `SAFEHARBOR_HUB_URL` - hub URL, for example `http://safeharbor.local:43718`
-- `SAFEHARBOR_HUB_TOKEN` - hub device token
+- `SAFEHARBOR_HUB_TOKEN` - enrolled device token from `/devices/enroll`
 - `SAFEHARBOR_HUB_SYNC_INTERVAL_MS` - optional interval, default `60000`
 - `SAFEHARBOR_DEVICE_ID` - optional local device ID override
 

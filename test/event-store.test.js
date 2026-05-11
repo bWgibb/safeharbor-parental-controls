@@ -91,6 +91,8 @@ test('seeds local profile, device, policy, and reports events', () => {
 
   const revoked = store.revokeDevice('local-device', 'Test revoke', '2026-05-10T12:05:00.000Z');
   assert.equal(revoked.status, 'revoked');
+  assert.equal(store.setDeviceTokenHash('local-device', 'hash-one'), true);
+  assert.equal(store.getDeviceAuth('local-device').deviceTokenHash, 'hash-one');
 
   store.close();
 });
@@ -124,11 +126,13 @@ test('creates enrollment codes and registers devices', () => {
     platform: 'win32',
     profileId: enrollment.profileId,
     createdAt: '2026-05-10T12:01:00.000Z',
-    lastSeenAt: '2026-05-10T12:01:00.000Z'
+    lastSeenAt: '2026-05-10T12:01:00.000Z',
+    deviceTokenHash: 'hash-device-test'
   });
   store.completeEnrollmentCode(enrollment.id, 'device-test');
 
   assert.equal(store.getDevice('device-test').name, 'Test Device');
+  assert.equal(store.getDeviceAuth('device-test').deviceTokenHash, 'hash-device-test');
   assert.equal(store.consumeEnrollmentCode('hash-123', 'other-device'), null);
   assert.equal(store.recentEnrollmentCodes()[0].usedByDeviceId, 'device-test');
 
