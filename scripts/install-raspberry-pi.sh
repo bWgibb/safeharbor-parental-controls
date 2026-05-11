@@ -37,7 +37,18 @@ if [ -z "$NODE_BIN" ]; then
   exit 1
 fi
 
-npm --prefix "$ROOT_DIR" install
+NODE_MAJOR=$("$NODE_BIN" -p "Number(process.versions.node.split('.')[0])")
+if [ "$NODE_MAJOR" -lt 20 ]; then
+  printf 'Node.js 20 LTS or newer is required. Found: %s\n' "$("$NODE_BIN" -v)" >&2
+  exit 1
+fi
+
+if [ -f "$ROOT_DIR/package-lock.json" ]; then
+  npm --prefix "$ROOT_DIR" ci
+else
+  npm --prefix "$ROOT_DIR" install
+fi
+
 sudo mkdir -p "$DATA_DIR"
 sudo chown "$RUN_USER:$RUN_GROUP" "$DATA_DIR"
 
@@ -66,9 +77,32 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$SERVICE_NAME"
 
+HEALTH_HOST="$BIND_HOST"
+if [ "$HEALTH_HOST" = "0.0.0.0" ]; then
+  HEALTH_HOST="127.0.0.1"
+fi
+HEALTH_URL="http://${HEALTH_HOST}:${BIND_PORT}/health"
+if command -v curl >/dev/null 2>&1; then
+  i=0
+  while [ "$i" -lt 20 ]; do
+    if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+      break
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  if [ "$i" -ge 20 ]; then
+    printf 'SafeHarbor service did not pass health check at %s.\n' "$HEALTH_URL" >&2
+    sudo journalctl -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
+    exit 1
+  fi
+else
+  printf 'curl was not found; skipping post-install health check.\n'
+fi
+
 printf 'SafeHarbor hub installed as %s.\n' "$SERVICE_NAME"
 printf 'Listening on %s:%s with data in %s.\n' "$BIND_HOST" "$BIND_PORT" "$DATA_DIR"
 printf 'Print the parent dashboard token with:\n'
 printf '  sudo -u %s env SAFEHARBOR_HOME=%s %s %s/server/safeharbor-server.js --show-token\n' "$RUN_USER" "$DATA_DIR" "$NODE_BIN" "$ROOT_DIR"
-printf 'Print the child device sync token with:\n'
+printf 'Print the legacy local-device token for smoke tests with:\n'
 printf '  sudo -u %s env SAFEHARBOR_HOME=%s %s %s/server/safeharbor-server.js --show-device-token\n' "$RUN_USER" "$DATA_DIR" "$NODE_BIN" "$ROOT_DIR"

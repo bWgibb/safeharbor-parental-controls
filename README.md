@@ -311,7 +311,7 @@ These APIs support the Raspberry Pi/home-hub model and act as the local test-dri
 
 Child agents can sync to a hub with:
 
-- `SAFEHARBOR_HUB_URL` - hub URL, for example `http://safeharbor.local:43718`
+- `SAFEHARBOR_HUB_URL` - hub URL, for example `http://homeautomation.local:43718`
 - `SAFEHARBOR_HUB_TOKEN` - enrolled device token from `/devices/enroll`
 - `SAFEHARBOR_HUB_SYNC_INTERVAL_MS` - optional interval, default `60000`
 - `SAFEHARBOR_HUB_SYNC_TIMEOUT_MS` - optional per-request timeout, default `10000`

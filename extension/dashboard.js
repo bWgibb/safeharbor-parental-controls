@@ -108,6 +108,7 @@ async function fetchJson(path, options = {}) {
 function renderDashboard() {
   $('subtitle').textContent = `${state.app} ${state.version} on ${state.host}:${state.port}`;
   renderMetrics(state.reports.counts);
+  renderHubSyncWarning();
   renderFamily();
   renderReportFilters();
   renderPolicy();
@@ -131,6 +132,17 @@ function metric(label, value) {
   node.className = 'metric';
   node.append(el('strong', String(value)), el('span', label));
   return node;
+}
+
+function renderHubSyncWarning() {
+  const warning = $('hubSyncWarning');
+  if (state.hubSyncEnabled && state.hubLastSyncError) {
+    warning.hidden = false;
+    warning.textContent = `Hub sync error: ${state.hubLastSyncError}`;
+    return;
+  }
+  warning.hidden = true;
+  warning.textContent = '';
 }
 
 function renderFamily() {

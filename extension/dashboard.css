@@ -136,6 +136,16 @@ label {
   font-size: 13px;
 }
 
+.sync-warning {
+  background: #fff4e1;
+  border: 1px solid #d8b76a;
+  border-radius: 8px;
+  color: #6f4b00;
+  font-weight: 650;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+}
+
 .layout,
 .report-grid {
   display: grid;
