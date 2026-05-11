@@ -4,17 +4,24 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
-const os = require('os');
 const path = require('path');
 const { URL } = require('url');
+const { createAuth, hashDeviceToken } = require('./lib/auth');
+const { createPaths, ensureDir, loadConfig, resolveBaseDir, writeJson } = require('./lib/config');
 const { defaultDevice, defaultPolicy, defaultProfile } = require('./lib/defaults');
 const { EventStore } = require('./lib/event-store');
+const {
+  readBody: readRequestBody,
+  sendFile,
+  sendHtml,
+  sendJson,
+  sendText,
+  staticContentType
+} = require('./lib/http-utils');
 const { evaluatePolicy, normalizePolicy } = require('./lib/policy-engine');
 
 const APP_NAME = 'SafeHarbor';
 const VERSION = '0.3.0';
-const DEFAULT_PORT = 43718;
-const DEFAULT_HOST = '127.0.0.1';
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RECENT_ACTIVITY = 50;
 const ENROLLMENT_CODE_MINUTES = 15;
@@ -36,111 +43,8 @@ const REGINA_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
 const args = new Set(process.argv.slice(2));
 const rootDir = path.resolve(__dirname, '..');
 const extensionDir = path.join(rootDir, 'extension');
-const baseDir = process.env.SAFEHARBOR_HOME
-  ? path.resolve(process.env.SAFEHARBOR_HOME)
-  : path.join(os.homedir(), '.safeharbor', 'local-agent');
-
-const paths = {
-  baseDir,
-  config: path.join(baseDir, 'config.json'),
-  captures: path.join(baseDir, 'captures'),
-  logs: path.join(baseDir, 'logs'),
-  alerts: path.join(baseDir, 'alerts'),
-  database: path.join(baseDir, 'safeharbor.sqlite')
-};
-
-function ensureDir(dir) {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
-function readJson(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (error) {
-    if (error.code === 'ENOENT') return fallback;
-    throw error;
-  }
-}
-
-function writeJson(file, value) {
-  fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n', { mode: 0o600 });
-}
-
-function loadConfig() {
-  ensureDir(paths.baseDir);
-  ensureDir(paths.captures);
-  ensureDir(paths.logs);
-  ensureDir(paths.alerts);
-
-  const existing = readJson(paths.config, null);
-  if (existing && existing.token) {
-    let changed = false;
-    if (!existing.parentToken) {
-      existing.parentToken = existing.token;
-      changed = true;
-    }
-    if (!existing.deviceToken) {
-      existing.deviceToken = crypto.randomBytes(32).toString('hex');
-      changed = true;
-    }
-    const next = {
-      host: process.env.SAFEHARBOR_HOST || existing.host || DEFAULT_HOST,
-      port: Number(process.env.PORT || existing.port || DEFAULT_PORT),
-      capturesDir: path.resolve(existing.capturesDir || paths.captures),
-      token: existing.parentToken,
-      parentToken: existing.parentToken,
-      deviceToken: existing.deviceToken,
-      hubLastEventId: Number(existing.hubLastEventId || 0),
-      hubLastSyncAt: existing.hubLastSyncAt || null,
-      hubLastSyncError: existing.hubLastSyncError || null
-    };
-    validateConfig(next);
-    if (changed) writeJson(paths.config, { ...existing, ...next });
-    return next;
-  }
-
-  const parentToken = crypto.randomBytes(32).toString('hex');
-  const created = {
-    host: process.env.SAFEHARBOR_HOST || DEFAULT_HOST,
-    port: Number(process.env.PORT || DEFAULT_PORT),
-    capturesDir: paths.captures,
-    token: parentToken,
-    parentToken,
-    deviceToken: crypto.randomBytes(32).toString('hex'),
-    hubLastEventId: 0,
-    hubLastSyncAt: null,
-    hubLastSyncError: null
-  };
-  validateConfig(created);
-  writeJson(paths.config, created);
-  return created;
-}
-
-function validateConfig(value) {
-  if (typeof value.host !== 'string' || !value.host.trim()) {
-    throw new Error('Invalid bind host in config.');
-  }
-  if (!Number.isInteger(value.port) || value.port < 1 || value.port > 65535) {
-    throw new Error(`Invalid port in config: ${value.port}`);
-  }
-  if (typeof value.token !== 'string' || value.token.length < 32) {
-    throw new Error('Invalid local parent auth token in config.');
-  }
-  if (typeof value.parentToken !== 'string' || value.parentToken.length < 32) {
-    throw new Error('Invalid local parent auth token in config.');
-  }
-  if (typeof value.deviceToken !== 'string' || value.deviceToken.length < 32) {
-    throw new Error('Invalid local device auth token in config.');
-  }
-  if (typeof value.capturesDir !== 'string' || !value.capturesDir.trim()) {
-    throw new Error('Invalid captures directory in config.');
-  }
-  if (!Number.isFinite(value.hubLastEventId) || value.hubLastEventId < 0) {
-    throw new Error('Invalid hub sync cursor in config.');
-  }
-}
-
-const config = loadConfig();
+const paths = createPaths(resolveBaseDir());
+const config = loadConfig(paths);
 ensureDir(config.capturesDir);
 ensureDir(paths.alerts);
 
@@ -161,6 +65,13 @@ store.seed({
   policy: defaultPolicy()
 });
 store.setDeviceTokenHash(defaultDevice().id, hashDeviceToken(config.deviceToken), { onlyIfMissing: true });
+const {
+  authScope,
+  forbidden,
+  requireDeviceForIdOrParent,
+  requireDeviceOrParent,
+  requireParent
+} = createAuth({ config, store, defaultDevice, sendJson });
 
 if (args.has('--print-config')) {
   process.stdout.write(JSON.stringify(configBody(), null, 2) + '\n');
@@ -216,114 +127,8 @@ function logEvent(level, message, details = {}) {
   fs.appendFileSync(file, line);
 }
 
-function sendJson(res, statusCode, body, extraHeaders = {}) {
-  res.writeHead(statusCode, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'authorization,content-type',
-    ...extraHeaders
-  });
-  res.end(JSON.stringify(body, null, 2) + '\n');
-}
-
-function sendHtml(res, statusCode, html) {
-  res.writeHead(statusCode, {
-    'content-type': 'text/html; charset=utf-8',
-    'cache-control': 'no-store',
-    'access-control-allow-origin': '*'
-  });
-  res.end(html);
-}
-
-function sendText(res, statusCode, text, contentType, fileName = '') {
-  const headers = {
-    'content-type': contentType,
-    'cache-control': 'no-store'
-  };
-  if (fileName) headers['content-disposition'] = `attachment; filename="${fileName}"`;
-  res.writeHead(statusCode, headers);
-  res.end(text);
-}
-
-function sendFile(res, filePath, contentType) {
-  res.writeHead(200, {
-    'content-type': contentType,
-    'cache-control': 'no-store'
-  });
-  fs.createReadStream(filePath).pipe(res);
-}
-
-function staticContentType(filePath) {
-  if (filePath.endsWith('.html')) return 'text/html; charset=utf-8';
-  if (filePath.endsWith('.css')) return 'text/css; charset=utf-8';
-  if (filePath.endsWith('.js')) return 'application/javascript; charset=utf-8';
-  return 'application/octet-stream';
-}
-
-function unauthorized(res) {
-  sendJson(res, 401, { ok: false, error: 'missing_or_invalid_token' });
-}
-
-function forbidden(res, error) {
-  sendJson(res, 403, { ok: false, error });
-}
-
-function bearerToken(req) {
-  const value = req.headers.authorization || '';
-  const prefix = 'Bearer ';
-  if (!value.startsWith(prefix)) return '';
-  return value.slice(prefix.length);
-}
-
-function authScope(req) {
-  const token = bearerToken(req);
-  if (!token) return '';
-  const received = Buffer.from(token);
-  const parent = Buffer.from(config.parentToken);
-  if (received.length === parent.length && crypto.timingSafeEqual(received, parent)) return 'parent';
-  const legacy = Buffer.from(config.token);
-  if (received.length === legacy.length && crypto.timingSafeEqual(received, legacy)) return 'parent';
-  const device = Buffer.from(config.deviceToken);
-  if (received.length === device.length && crypto.timingSafeEqual(received, device)) return 'legacy-device';
-  return '';
-}
-
-function isAuthorized(req) {
-  return Boolean(authScope(req));
-}
-
 function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks = [];
-
-    req.on('data', chunk => {
-      size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        reject(Object.assign(new Error('request_body_too_large'), { statusCode: 413 }));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-
-    req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8');
-      if (!raw.trim()) {
-        resolve({});
-        return;
-      }
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(Object.assign(new Error('invalid_json'), { statusCode: 400 }));
-      }
-    });
-
-    req.on('error', reject);
-  });
+  return readRequestBody(req, MAX_BODY_BYTES);
 }
 
 function asString(value, fallback = '') {
@@ -520,62 +325,6 @@ function escapeHtml(value) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-function requireAuthorized(req, res) {
-  if (isAuthorized(req)) return true;
-  unauthorized(res);
-  return false;
-}
-
-function requireParent(req, res) {
-  if (authScope(req) === 'parent') return true;
-  unauthorized(res);
-  return false;
-}
-
-function requireDeviceOrParent(req, res) {
-  if (isAuthorized(req)) return true;
-  unauthorized(res);
-  return false;
-}
-
-function hashDeviceToken(token) {
-  return crypto.createHash('sha256').update(String(token)).digest('hex');
-}
-
-function tokenMatchesHash(token, expectedHash) {
-  if (!token || !expectedHash) return false;
-  const actual = Buffer.from(hashDeviceToken(token));
-  const expected = Buffer.from(expectedHash);
-  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
-}
-
-function requireDeviceForIdOrParent(req, res, deviceId, options = {}) {
-  const scope = authScope(req);
-  if (scope === 'parent') return true;
-  const token = bearerToken(req);
-  if (!token) {
-    unauthorized(res);
-    return false;
-  }
-  if (!deviceId) {
-    sendJson(res, 400, { ok: false, error: 'device_id_required' });
-    return false;
-  }
-  const device = store.getDeviceAuth(deviceId);
-  if (!device) {
-    sendJson(res, options.unknownStatusCode || 403, { ok: false, error: 'device_not_enrolled' });
-    return false;
-  }
-  if (device.revokedAt) {
-    forbidden(res, 'device_revoked');
-    return false;
-  }
-  if (tokenMatchesHash(token, device.deviceTokenHash)) return true;
-  if (scope === 'legacy-device' && deviceId === defaultDevice().id) return true;
-  forbidden(res, 'device_token_mismatch');
-  return false;
 }
 
 function parseReportFilters(searchParams) {

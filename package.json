@@ -10,7 +10,7 @@
     "device-token": "node server/safeharbor-server.js --show-device-token",
     "config": "node server/safeharbor-server.js --print-config",
     "simulate": "node scripts/simulate-devices.js",
-    "check": "node --check server/safeharbor-server.js && node --check server/lib/defaults.js && node --check server/lib/event-store.js && node --check server/lib/policy-engine.js && node --check extension/background.js && node --check extension/block.js && node --check extension/dashboard.js && node --check extension/popup.js && node --check extension/options.js && node --check extension/status.js && node --check scripts/simulate-devices.js",
+    "check": "node --check server/safeharbor-server.js && node --check server/lib/auth.js && node --check server/lib/config.js && node --check server/lib/defaults.js && node --check server/lib/event-store.js && node --check server/lib/http-utils.js && node --check server/lib/policy-engine.js && node --check extension/background.js && node --check extension/block.js && node --check extension/dashboard.js && node --check extension/popup.js && node --check extension/options.js && node --check extension/status.js && node --check scripts/simulate-devices.js",
     "test": "node --test"
   },
   "engines": {
