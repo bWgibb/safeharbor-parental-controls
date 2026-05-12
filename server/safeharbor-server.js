@@ -7,9 +7,11 @@ const http = require('http');
 const path = require('path');
 const { URL } = require('url');
 const { createAuth, hashDeviceToken } = require('./lib/auth');
+const { sendSqliteBackup } = require('./lib/backup');
 const { createPaths, ensureDir, loadConfig, resolveBaseDir, writeJson } = require('./lib/config');
 const { defaultDevice, defaultPolicy, defaultProfile } = require('./lib/defaults');
 const { EventStore } = require('./lib/event-store');
+const { createHubSync } = require('./lib/hub-sync');
 const {
   readBody: readRequestBody,
   sendFile,
@@ -25,9 +27,6 @@ const VERSION = '0.3.0';
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_RECENT_ACTIVITY = 50;
 const ENROLLMENT_CODE_MINUTES = 15;
-const DEFAULT_HUB_SYNC_INTERVAL_MS = 60 * 1000;
-const DEFAULT_HUB_SYNC_TIMEOUT_MS = 10 * 1000;
-const MAX_HUB_SYNC_BACKOFF_MS = 5 * 60 * 1000;
 const REGINA_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/Regina',
   year: 'numeric',
@@ -65,6 +64,7 @@ store.seed({
   policy: defaultPolicy()
 });
 store.setDeviceTokenHash(defaultDevice().id, hashDeviceToken(config.deviceToken), { onlyIfMissing: true });
+ensureConfiguredDevice();
 const {
   authScope,
   forbidden,
@@ -102,10 +102,12 @@ function configBody() {
     logsDir: paths.logs,
     alertsDir: paths.alerts,
     hubSyncEnabled: Boolean(hubSyncSettings()),
+    deviceId: configuredDeviceId(),
     hubLastEventId: config.hubLastEventId,
     hubLastSyncAt: config.hubLastSyncAt,
     hubLastSyncError: config.hubLastSyncError,
-    hubPendingEvents: store ? store.eventsAfterId(config.hubLastEventId, 500).length : 0
+    hubPendingEvents: store ? store.eventsAfterId(config.hubLastEventId, 500).length : 0,
+    alertPreferences: config.alertPreferences
   };
 }
 
@@ -133,6 +135,28 @@ function readBody(req) {
 
 function asString(value, fallback = '') {
   return typeof value === 'string' ? value : fallback;
+}
+
+function configuredDeviceId() {
+  return asString(process.env.SAFEHARBOR_DEVICE_ID || config.deviceId, defaultDevice().id);
+}
+
+function configuredProfileId() {
+  const enrolled = config.enrolledDevice && typeof config.enrolledDevice === 'object' ? config.enrolledDevice : {};
+  return asString(config.profileId || enrolled.profileId, defaultProfile().id);
+}
+
+function ensureConfiguredDevice() {
+  const deviceId = configuredDeviceId();
+  if (!deviceId || deviceId === defaultDevice().id) return;
+  const enrolled = config.enrolledDevice && typeof config.enrolledDevice === 'object' ? config.enrolledDevice : {};
+  store.upsertDevice({
+    id: deviceId,
+    name: asString(enrolled.name, 'Enrolled Device'),
+    platform: asString(enrolled.platform, process.platform),
+    profileId: configuredProfileId(),
+    createdAt: asString(enrolled.createdAt, nowIso())
+  });
 }
 
 function truncate(value, limit) {
@@ -252,14 +276,17 @@ function writeCapture(payload) {
 }
 
 function getDefaultContext() {
-  const [profile] = store.getProfiles();
-  const device = store.getDevices().find(item => item.profileId === profile.id) || store.getDevices()[0];
+  ensureConfiguredDevice();
+  const profile = store.getProfiles().find(item => item.id === configuredProfileId()) || store.getProfiles()[0];
+  const device = store.getDevice(configuredDeviceId())
+    || store.getDevices().find(item => item.profileId === profile.id)
+    || store.getDevices()[0];
   const policy = store.getPolicy(profile.id);
   return { profile, device, policy };
 }
 
 function statusBody() {
-  store.generateAlerts();
+  generateConfiguredAlerts();
   deliverOpenAlerts();
   const reports = store.reports();
   const alerts = store.alerts();
@@ -274,6 +301,10 @@ function statusBody() {
     alerts,
     recentActivity: store.recentEvents(MAX_RECENT_ACTIVITY)
   };
+}
+
+function generateConfiguredAlerts() {
+  store.generateAlerts(nowIso(), config.alertPreferences);
 }
 
 function statusHtml(body) {
@@ -391,12 +422,25 @@ function alertEml(alert) {
 function deliverOpenAlerts() {
   if (process.env.SAFEHARBOR_ALERT_DELIVERY === 'off') return;
   ensureDir(paths.alerts);
-  const alerts = store.alerts(50).rows.filter(alert => !alert.deliveredAt);
+  const alerts = store.alerts(50).rows.filter(alert => !alert.deliveredAt && alertDeliveryEnabled(alert.type));
   for (const alert of alerts) {
     const fileName = `${safeFileStamp()}-alert-${alert.id}-${slugify(alert.type)}.eml`;
     fs.writeFileSync(path.join(paths.alerts, fileName), alertEml(alert), { mode: 0o600 });
     store.markAlertDelivered(alert.id);
   }
+}
+
+function alertDeliveryEnabled(type) {
+  const preferences = config.alertPreferences || {};
+  const map = {
+    repeated_block: 'repeatedBlock',
+    schedule_violation: 'scheduleViolation',
+    tamper_signal: 'tamperSignal',
+    device_offline: 'deviceOffline',
+    device_revoked: 'deviceRevoked'
+  };
+  const key = map[type];
+  return !key || preferences[key] !== false;
 }
 
 function deviceIsRevoked(deviceId) {
@@ -804,17 +848,19 @@ async function handleDeviceRevoke(req, res) {
     source: 'parent-dashboard',
     metadata: { reason: device.revokedReason }
   });
-  store.upsertAlert({
-    alertKey: `device-revoked:${deviceId}:${timestamp}`,
-    type: 'device_revoked',
-    severity: 'medium',
-    title: 'Device revoked',
-    message: `${device.name} was revoked.`,
-    profileId: device.profileId,
-    deviceId,
-    createdAt: timestamp,
-    metadata: { reason: device.revokedReason }
-  });
+  if ((config.alertPreferences || {}).deviceRevoked !== false) {
+    store.upsertAlert({
+      alertKey: `device-revoked:${deviceId}:${timestamp}`,
+      type: 'device_revoked',
+      severity: 'medium',
+      title: 'Device revoked',
+      message: `${device.name} was revoked.`,
+      profileId: device.profileId,
+      deviceId,
+      createdAt: timestamp,
+      metadata: { reason: device.revokedReason }
+    });
+  }
   sendJson(res, 200, { ok: true, device });
 }
 
@@ -828,6 +874,22 @@ async function handleAlertResolve(req, res) {
     return;
   }
   sendJson(res, 200, { ok: true, resolved: store.resolveAlert(alertId) });
+}
+
+async function handleAlertPreferencesUpdate(req, res) {
+  if (!requireParent(req, res)) return;
+
+  const body = await readBody(req);
+  const source = body.alertPreferences && typeof body.alertPreferences === 'object'
+    ? body.alertPreferences
+    : body;
+  const next = { ...config.alertPreferences };
+  for (const key of Object.keys(next)) {
+    if (source[key] != null) next[key] = Boolean(source[key]);
+  }
+  config.alertPreferences = next;
+  writeJson(paths.config, config);
+  sendJson(res, 200, { ok: true, alertPreferences: config.alertPreferences });
 }
 
 async function handlePolicyImport(req, res) {
@@ -855,207 +917,29 @@ async function handlePolicyImport(req, res) {
 async function handleBackup(req, res) {
   if (!requireParent(req, res)) return;
 
-  const backupFile = path.join(paths.baseDir, `safeharbor-backup-${safeFileStamp()}.sqlite`);
-  try {
-    await store.backupTo(backupFile);
-    await streamBackup(res, backupFile);
-  } finally {
-    fs.rmSync(backupFile, { force: true });
-  }
+  await sendSqliteBackup({ res, store, nowIso });
 }
 
-function streamBackup(res, backupFile) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const stream = fs.createReadStream(backupFile);
-    const done = error => {
-      if (settled) return;
-      settled = true;
-      stream.destroy();
-      if (error) reject(error);
-      else resolve();
-    };
-
-    stream.on('error', done);
-    res.on('finish', () => done());
-    res.on('close', () => done());
-    res.writeHead(200, {
-      'content-type': 'application/vnd.sqlite3',
-      'cache-control': 'no-store',
-      'content-disposition': 'attachment; filename="safeharbor-backup.sqlite"'
-    });
-    stream.pipe(res);
-  });
-}
+const hubSync = createHubSync({
+  asString,
+  config,
+  getContext: getDefaultContext,
+  getDeviceId: configuredDeviceId,
+  logEvent,
+  normalizePolicy,
+  nowIso,
+  paths,
+  store,
+  validatePolicy,
+  writeJson
+});
 
 function hubSyncSettings() {
-  const hubUrl = asString(process.env.SAFEHARBOR_HUB_URL).replace(/\/+$/, '');
-  const token = asString(process.env.SAFEHARBOR_HUB_TOKEN);
-  if (!hubUrl || !token) return null;
-  let url;
-  try {
-    url = new URL(hubUrl);
-  } catch {
-    throw new Error('Invalid SAFEHARBOR_HUB_URL.');
-  }
-  if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new Error('SAFEHARBOR_HUB_URL must start with http:// or https://.');
-  }
-  return {
-    url: hubUrl,
-    token,
-    intervalMs: Math.max(5000, Number(process.env.SAFEHARBOR_HUB_SYNC_INTERVAL_MS || DEFAULT_HUB_SYNC_INTERVAL_MS)),
-    timeoutMs: Math.max(1000, Number(process.env.SAFEHARBOR_HUB_SYNC_TIMEOUT_MS || DEFAULT_HUB_SYNC_TIMEOUT_MS))
-  };
-}
-
-async function fetchJsonWithTimeout(url, options = {}, timeoutMs = DEFAULT_HUB_SYNC_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal
-    });
-    const body = await response.json().catch(() => ({}));
-    return { response, body };
-  } catch (error) {
-    if (error.name === 'AbortError') {
-      throw new Error(`Hub request timed out after ${timeoutMs}ms`);
-    }
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function runHubSync() {
-  const hub = hubSyncSettings();
-  if (!hub) return;
-
-  const { profile, device } = getDefaultContext();
-  const deviceId = asString(process.env.SAFEHARBOR_DEVICE_ID, device.id);
-  const activeDevice = store.getDevice(deviceId) || device;
-  const headers = {
-    authorization: `Bearer ${hub.token}`,
-    'content-type': 'application/json'
-  };
-
-  const policyUrl = `${hub.url}/sync/policy?deviceId=${encodeURIComponent(deviceId)}`;
-  const { response: policyResponse, body: policyBody } = await fetchJsonWithTimeout(policyUrl, { headers }, hub.timeoutMs);
-  if (!policyResponse.ok || !policyBody.ok) {
-    throw new Error(policyBody.error || `Hub policy sync returned ${policyResponse.status}`);
-  }
-  if (policyBody.policy) {
-    const nextPolicy = normalizePolicy(policyBody.policy);
-    const validationError = validatePolicy(nextPolicy);
-    if (validationError) throw new Error(`Hub policy sync failed: ${validationError}`);
-    store.upsertPolicy(nextPolicy);
-  }
-
-  const events = store.eventsAfterId(config.hubLastEventId, 100);
-  if (!events.length) {
-    config.hubLastSyncAt = nowIso();
-    config.hubLastSyncError = null;
-    writeJson(paths.config, config);
-    return;
-  }
-
-  const batchId = crypto.randomUUID();
-  const { response: eventsResponse, body: eventsBody } = await fetchJsonWithTimeout(`${hub.url}/sync/events`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      batchId,
-      deviceId,
-      profileId: activeDevice.profileId || profile.id,
-      device: {
-        id: deviceId,
-        name: activeDevice.name,
-        platform: activeDevice.platform,
-        profileId: activeDevice.profileId || profile.id,
-        createdAt: activeDevice.createdAt
-      },
-      events: events.map(event => ({
-        ...event,
-        deviceId: event.deviceId || deviceId,
-        profileId: event.profileId || activeDevice.profileId || profile.id,
-        metadata: {
-          ...(event.metadata || {}),
-          localEventId: event.id
-        },
-        localEventId: event.id
-      }))
-    })
-  }, hub.timeoutMs);
-  if (!eventsResponse.ok || !eventsBody.ok) {
-    throw new Error(eventsBody.error || `Hub event sync returned ${eventsResponse.status}`);
-  }
-  const confirmed = eventsBody.batchId === batchId
-    && Number(eventsBody.received) === events.length
-    && Number(eventsBody.accepted || 0) + Number(eventsBody.duplicates || 0) === events.length
-    && Number(eventsBody.lastLocalEventId) === events[events.length - 1].id;
-  if (!confirmed) {
-    throw new Error('Hub event sync acknowledgement did not match the sent batch.');
-  }
-
-  config.hubLastEventId = events[events.length - 1].id;
-  config.hubLastSyncAt = nowIso();
-  config.hubLastSyncError = null;
-  writeJson(paths.config, config);
-  logEvent('info', 'hub_sync_completed', {
-    hub: hub.url,
-    accepted: eventsBody.accepted,
-    lastEventId: config.hubLastEventId
-  });
-}
-
-let hubSyncTimer = null;
-let hubSyncInFlight = false;
-let hubSyncBackoffMs = 0;
-
-function nextHubSyncBackoff() {
-  if (!hubSyncBackoffMs) return 5000;
-  return Math.min(hubSyncBackoffMs * 2, MAX_HUB_SYNC_BACKOFF_MS);
-}
-
-function scheduleHubSync(delayMs) {
-  if (hubSyncTimer) clearTimeout(hubSyncTimer);
-  hubSyncTimer = setTimeout(runScheduledHubSync, delayMs);
-  hubSyncTimer.unref();
-}
-
-function runScheduledHubSync() {
-  const hub = hubSyncSettings();
-  if (!hub) return;
-  if (hubSyncInFlight) {
-    logEvent('warn', 'hub_sync_skipped_in_flight');
-    scheduleHubSync(hub.intervalMs);
-    return;
-  }
-
-  hubSyncInFlight = true;
-  runHubSync()
-    .then(() => {
-      hubSyncBackoffMs = 0;
-      scheduleHubSync(hub.intervalMs);
-    })
-    .catch(error => {
-      hubSyncBackoffMs = nextHubSyncBackoff();
-      config.hubLastSyncError = error.message;
-      writeJson(paths.config, config);
-      logEvent('error', 'hub_sync_failed', { error: error.message, retryInMs: hubSyncBackoffMs });
-      scheduleHubSync(hubSyncBackoffMs);
-    })
-    .finally(() => {
-      hubSyncInFlight = false;
-    });
+  return hubSync.settings();
 }
 
 function startHubSync() {
-  const hub = hubSyncSettings();
-  if (!hub) return;
-  scheduleHubSync(0);
+  hubSync.start();
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1199,7 +1083,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && parsed.pathname === '/reports/local') {
       if (!requireParent(req, res)) return;
-      store.generateAlerts();
+      generateConfiguredAlerts();
       const filters = parseReportFilters(parsed.searchParams);
       sendJson(res, 200, {
         ok: true,
@@ -1227,7 +1111,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && parsed.pathname === '/alerts') {
       if (!requireParent(req, res)) return;
-      store.generateAlerts();
+      generateConfiguredAlerts();
       deliverOpenAlerts();
       sendJson(res, 200, { ok: true, alerts: store.alerts(50, parsed.searchParams.get('includeResolved') === 'true') });
       return;
@@ -1235,6 +1119,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && parsed.pathname === '/alerts/resolve') {
       await handleAlertResolve(req, res);
+      return;
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/alerts/preferences') {
+      await handleAlertPreferencesUpdate(req, res);
       return;
     }
 
@@ -1313,7 +1202,7 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 function shutdown(signal) {
   logEvent('info', 'server_stopping', { signal });
-  if (hubSyncTimer) clearInterval(hubSyncTimer);
+  hubSync.stop();
   server.close(() => {
     store.close();
     process.exit(0);

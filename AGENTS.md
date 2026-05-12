@@ -87,6 +87,14 @@ sh -n scripts/install-raspberry-pi.sh
 
 Current test coverage includes rule engine behavior, SQLite/event-store behavior, server smoke paths, auth scope checks, exports, alerts, revocation, sync timeout handling, and a headless hub-plus-child-agent sync process.
 
+Enroll a child agent against the hub with:
+
+```sh
+npm run enroll-device -- --hub http://homeautomation.local:43718 --code <pairing-code> --name "Child Laptop"
+```
+
+This persists the enrolled device ID and device-scoped hub token in the local SafeHarbor config so browser events are attributed to the enrolled device during hub sync.
+
 ## Open Work
 
 - Validate real Raspberry Pi service install end to end after each deploy.

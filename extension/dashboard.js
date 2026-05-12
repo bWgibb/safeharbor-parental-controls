@@ -48,10 +48,7 @@ async function loadDashboard() {
   try {
     settings = await getStoredSettings({
       serverUrl: DEFAULT_SERVER_URL,
-      token: '',
-      alertBlocked: true,
-      alertTamper: true,
-      alertOffline: true
+      token: ''
     });
     settings.serverUrl = String(settings.serverUrl || DEFAULT_SERVER_URL).replace(/\/+$/, '');
     if (!settings.token) throw new Error('Missing token. Add it in extension options.');
@@ -313,9 +310,10 @@ function renderTable(targetId, items, mapper) {
 }
 
 function renderAlertPrefs() {
-  $('alertBlocked').checked = Boolean(settings.alertBlocked);
-  $('alertTamper').checked = Boolean(settings.alertTamper);
-  $('alertOffline').checked = Boolean(settings.alertOffline);
+  const preferences = state.alertPreferences || {};
+  $('alertBlocked').checked = preferences.repeatedBlock !== false && preferences.scheduleViolation !== false;
+  $('alertTamper').checked = preferences.tamperSignal !== false;
+  $('alertOffline').checked = preferences.deviceOffline !== false;
 }
 
 function addDomain(event, listName, inputId, action) {
@@ -513,14 +511,30 @@ async function downloadAuthenticated(path, fileName) {
 }
 
 async function saveAlertPrefs() {
+  const preferences = {
+    repeatedBlock: $('alertBlocked').checked,
+    scheduleViolation: $('alertBlocked').checked,
+    tamperSignal: $('alertTamper').checked,
+    deviceOffline: $('alertOffline').checked,
+    deviceRevoked: $('alertOffline').checked
+  };
   const values = {
     alertBlocked: $('alertBlocked').checked,
     alertTamper: $('alertTamper').checked,
     alertOffline: $('alertOffline').checked
   };
-  if (hasChromeApi) await chrome.storage.local.set(values);
-  else saveWebSettings(values);
-  setStatus('Alert preferences saved.', 'success');
+  try {
+    const result = await fetchJson('/alerts/preferences', {
+      method: 'POST',
+      body: JSON.stringify({ alertPreferences: preferences })
+    });
+    state.alertPreferences = result.alertPreferences;
+    if (hasChromeApi) await chrome.storage.local.set(values);
+    else saveWebSettings(values);
+    setStatus('Alert preferences saved.', 'success');
+  } catch (error) {
+    setStatus(error.message, 'error');
+  }
 }
 
 function openOptions() {

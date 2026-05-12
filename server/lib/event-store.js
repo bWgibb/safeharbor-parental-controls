@@ -651,98 +651,107 @@ class EventStore {
     };
   }
 
-  generateAlerts(timestamp = new Date().toISOString()) {
-    const recentBlocks = this.db.prepare(`
-      SELECT device_id AS deviceId, profile_id AS profileId, domain, COUNT(*) AS count, MAX(id) AS eventId
-      FROM events
-      WHERE decision = 'block'
-        AND timestamp >= datetime('now', '-24 hours')
-        AND device_id IS NOT NULL
-      GROUP BY device_id, domain
-      HAVING count >= 3
-    `).all();
+  generateAlerts(timestamp = new Date().toISOString(), preferences = {}) {
+    const enabled = key => preferences[key] !== false;
+    if (enabled('repeatedBlock')) {
+      const recentBlocks = this.db.prepare(`
+        SELECT device_id AS deviceId, profile_id AS profileId, domain, COUNT(*) AS count, MAX(id) AS eventId
+        FROM events
+        WHERE decision = 'block'
+          AND timestamp >= datetime('now', '-24 hours')
+          AND device_id IS NOT NULL
+        GROUP BY device_id, domain
+        HAVING count >= 3
+      `).all();
 
-    for (const row of recentBlocks) {
-      this.upsertAlert({
-        alertKey: `repeated-block:${row.deviceId}:${row.domain}`,
-        type: 'repeated_block',
-        severity: 'medium',
-        title: 'Repeated blocked attempts',
-        message: `${row.domain} was blocked ${row.count} times in the last 24 hours.`,
-        profileId: row.profileId,
-        deviceId: row.deviceId,
-        eventId: row.eventId,
-        createdAt: timestamp,
-        metadata: { domain: row.domain, count: row.count }
-      });
+      for (const row of recentBlocks) {
+        this.upsertAlert({
+          alertKey: `repeated-block:${row.deviceId}:${row.domain}`,
+          type: 'repeated_block',
+          severity: 'medium',
+          title: 'Repeated blocked attempts',
+          message: `${row.domain} was blocked ${row.count} times in the last 24 hours.`,
+          profileId: row.profileId,
+          deviceId: row.deviceId,
+          eventId: row.eventId,
+          createdAt: timestamp,
+          metadata: { domain: row.domain, count: row.count }
+        });
+      }
     }
 
-    const scheduleBlocks = this.db.prepare(`
-      SELECT device_id AS deviceId, profile_id AS profileId, COUNT(*) AS count, MAX(id) AS eventId
-      FROM events
-      WHERE decision = 'block'
-        AND timestamp >= datetime('now', '-24 hours')
-        AND device_id IS NOT NULL
-        AND (
-          rule_id LIKE '%schedule%'
-          OR reason LIKE '%schedule%'
-          OR reason LIKE '%Scheduled%'
-        )
-      GROUP BY device_id
-      HAVING count >= 1
-    `).all();
+    if (enabled('scheduleViolation')) {
+      const scheduleBlocks = this.db.prepare(`
+        SELECT device_id AS deviceId, profile_id AS profileId, COUNT(*) AS count, MAX(id) AS eventId
+        FROM events
+        WHERE decision = 'block'
+          AND timestamp >= datetime('now', '-24 hours')
+          AND device_id IS NOT NULL
+          AND (
+            rule_id LIKE '%schedule%'
+            OR reason LIKE '%schedule%'
+            OR reason LIKE '%Scheduled%'
+          )
+        GROUP BY device_id
+        HAVING count >= 1
+      `).all();
 
-    for (const row of scheduleBlocks) {
-      this.upsertAlert({
-        alertKey: `schedule:${row.deviceId}`,
-        type: 'schedule_violation',
-        severity: 'medium',
-        title: 'Schedule violation',
-        message: `${row.count} schedule-blocked attempt${row.count === 1 ? '' : 's'} in the last 24 hours.`,
-        profileId: row.profileId,
-        deviceId: row.deviceId,
-        eventId: row.eventId,
-        createdAt: timestamp,
-        metadata: { count: row.count }
-      });
+      for (const row of scheduleBlocks) {
+        this.upsertAlert({
+          alertKey: `schedule:${row.deviceId}`,
+          type: 'schedule_violation',
+          severity: 'medium',
+          title: 'Schedule violation',
+          message: `${row.count} schedule-blocked attempt${row.count === 1 ? '' : 's'} in the last 24 hours.`,
+          profileId: row.profileId,
+          deviceId: row.deviceId,
+          eventId: row.eventId,
+          createdAt: timestamp,
+          metadata: { count: row.count }
+        });
+      }
     }
 
-    const tamperSignals = this.db.prepare(`
-      SELECT id, profile_id AS profileId, device_id AS deviceId, reason, timestamp
-      FROM events
-      WHERE type = 'tamper_signal'
-      ORDER BY id DESC
-      LIMIT 25
-    `).all();
+    if (enabled('tamperSignal')) {
+      const tamperSignals = this.db.prepare(`
+        SELECT id, profile_id AS profileId, device_id AS deviceId, reason, timestamp
+        FROM events
+        WHERE type = 'tamper_signal'
+        ORDER BY id DESC
+        LIMIT 25
+      `).all();
 
-    for (const row of tamperSignals) {
-      this.upsertAlert({
-        alertKey: `tamper:${row.id}`,
-        type: 'tamper_signal',
-        severity: 'high',
-        title: 'Tamper signal',
-        message: row.reason || 'SafeHarbor received a tamper signal.',
-        profileId: row.profileId,
-        deviceId: row.deviceId,
-        eventId: row.id,
-        createdAt: row.timestamp || timestamp,
-        metadata: {}
-      });
+      for (const row of tamperSignals) {
+        this.upsertAlert({
+          alertKey: `tamper:${row.id}`,
+          type: 'tamper_signal',
+          severity: 'high',
+          title: 'Tamper signal',
+          message: row.reason || 'SafeHarbor received a tamper signal.',
+          profileId: row.profileId,
+          deviceId: row.deviceId,
+          eventId: row.id,
+          createdAt: row.timestamp || timestamp,
+          metadata: {}
+        });
+      }
     }
 
-    const offlineDevices = this.getDevices().filter(device => device.status === 'offline' && !device.revokedAt);
-    for (const device of offlineDevices) {
-      this.upsertAlert({
-        alertKey: `offline:${device.id}`,
-        type: 'device_offline',
-        severity: 'medium',
-        title: 'Device offline',
-        message: `${device.name} has not checked in recently.`,
-        profileId: device.profileId,
-        deviceId: device.id,
-        createdAt: timestamp,
-        metadata: { lastSeenAt: device.lastSeenAt }
-      });
+    if (enabled('deviceOffline')) {
+      const offlineDevices = this.getDevices().filter(device => device.status === 'offline' && !device.revokedAt);
+      for (const device of offlineDevices) {
+        this.upsertAlert({
+          alertKey: `offline:${device.id}`,
+          type: 'device_offline',
+          severity: 'medium',
+          title: 'Device offline',
+          message: `${device.name} has not checked in recently.`,
+          profileId: device.profileId,
+          deviceId: device.id,
+          createdAt: timestamp,
+          metadata: { lastSeenAt: device.lastSeenAt }
+        });
+      }
     }
   }
 

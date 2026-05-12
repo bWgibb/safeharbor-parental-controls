@@ -165,15 +165,17 @@ For a child device, prefer keeping the extension pointed at its local agent for 
 http://127.0.0.1:43718
 ```
 
-Generate a pairing code from the dashboard, enroll the child device, and use the enrolled device token returned by `/devices/enroll`. Then run the local child agent with hub sync enabled:
+Generate a pairing code from the dashboard, enroll the child device, and then run the local child agent:
 
 ```sh
-SAFEHARBOR_HUB_URL=http://homeautomation.local:43718 \
-SAFEHARBOR_HUB_TOKEN=<enrolled-device-token> \
+npm run enroll-device -- \
+  --hub http://homeautomation.local:43718 \
+  --code <pairing-code> \
+  --name "Child Laptop"
 npm start
 ```
 
-With hub sync enabled, the child agent periodically pulls policy from the Pi and uploads local events into the central hub database. Device-scoped sync requires the token issued for that enrolled device, so revoking a device prevents it from syncing until it is re-enrolled.
+The enrollment command stores the hub URL, enrolled device ID, and enrolled device token in the local SafeHarbor config. With hub sync enabled, the child agent periodically pulls policy from the Pi and uploads local events into the central hub database. Device-scoped sync requires the token issued for that enrolled device, so revoking a device prevents it from syncing until it is re-enrolled.
 
 To test the hub without Windows or a browser extension, run the simulator from another terminal:
 
@@ -251,6 +253,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -Uninstal
 - `POST /events` - authenticated event ingestion for tamper signals or local events
 - `GET /alerts` - authenticated open alert list
 - `POST /alerts/resolve` - authenticated alert resolution
+- `POST /alerts/preferences` - authenticated server-side alert preference update
 - `GET /devices/sync-status` - authenticated per-device sync status
 - `POST /capture/page` - authenticated page capture
 - `POST /capture/selection` - authenticated selected-text capture
@@ -315,7 +318,7 @@ Child agents can sync to a hub with:
 - `SAFEHARBOR_HUB_TOKEN` - enrolled device token from `/devices/enroll`
 - `SAFEHARBOR_HUB_SYNC_INTERVAL_MS` - optional interval, default `60000`
 - `SAFEHARBOR_HUB_SYNC_TIMEOUT_MS` - optional per-request timeout, default `10000`
-- `SAFEHARBOR_DEVICE_ID` - optional local device ID override
+- `SAFEHARBOR_DEVICE_ID` - local enrolled device ID override; normally written by `npm run enroll-device`
 
 ## Testing
 

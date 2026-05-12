@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
@@ -175,12 +175,31 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
     });
     assert.equal(deviceReports.status, 401);
 
+    const mutedPreferences = await postJson(`${baseUrl}/alerts/preferences`, config.token, {
+      alertPreferences: { tamperSignal: false }
+    });
+    assert.equal(mutedPreferences.alertPreferences.tamperSignal, false);
+
     await postJson(`${baseUrl}/events`, config.token, {
       type: 'tamper_signal',
       timestamp: '2026-05-10T12:12:00.000Z',
       deviceId: 'windows-test-device',
       profileId: 'default-child',
       reason: 'Simulated extension disabled',
+      source: 'test'
+    });
+    const mutedAlerts = await getJson(`${baseUrl}/alerts`, config.token);
+    assert.equal(mutedAlerts.alerts.rows.some(alert => alert.type === 'tamper_signal'), false);
+
+    await postJson(`${baseUrl}/alerts/preferences`, config.token, {
+      alertPreferences: { tamperSignal: true }
+    });
+    await postJson(`${baseUrl}/events`, config.token, {
+      type: 'tamper_signal',
+      timestamp: '2026-05-10T12:13:00.000Z',
+      deviceId: 'windows-test-device',
+      profileId: 'default-child',
+      reason: 'Simulated extension disabled again',
       source: 'test'
     });
     const alerts = await getJson(`${baseUrl}/alerts`, config.token);
@@ -224,29 +243,24 @@ test('child agent syncs local events to a hub process', async () => {
     const enrollmentCode = await postJson(`${hubUrl}/enrollment/code`, hubConfig.token, {
       profileId: 'default-child'
     });
-    const enrolled = await postJsonWithoutToken(`${hubUrl}/devices/enroll`, {
-      code: enrollmentCode.code,
-      deviceId: 'child-agent-1',
-      name: 'Child Agent 1',
-      platform: 'test'
-    });
-
-    child = spawn(process.execPath, ['server/safeharbor-server.js'], {
+    const enroll = spawnSync(process.execPath, [
+      'scripts/enroll-device.js',
+      '--hub',
+      hubUrl,
+      '--code',
+      enrollmentCode.code,
+      '--deviceId',
+      'child-agent-1',
+      '--name',
+      'Child Agent 1',
+      '--platform',
+      'test'
+    ], {
       cwd: root,
-      env: { ...process.env, SAFEHARBOR_HOME: childHome, PORT: childPort },
-      stdio: ['ignore', 'pipe', 'pipe']
+      env: { ...process.env, SAFEHARBOR_HOME: childHome },
+      encoding: 'utf8'
     });
-    await waitForOutput(child, 'listening');
-    const childConfig = JSON.parse(fs.readFileSync(path.join(childHome, 'config.json'), 'utf8'));
-    const childUrl = `http://127.0.0.1:${childPort}`;
-    await postJson(`${childUrl}/policy/evaluate`, childConfig.token, {
-      url: 'https://example.com/',
-      timestamp: '2026-05-10T13:00:00.000Z',
-      deviceId: 'child-agent-1',
-      source: 'test-child-agent'
-    });
-    child.kill('SIGTERM');
-    await waitForExit(child);
+    assert.equal(enroll.status, 0, enroll.stderr || enroll.stdout);
 
     child = spawn(process.execPath, ['server/safeharbor-server.js'], {
       cwd: root,
@@ -254,18 +268,25 @@ test('child agent syncs local events to a hub process', async () => {
         ...process.env,
         SAFEHARBOR_HOME: childHome,
         PORT: childPort,
-        SAFEHARBOR_HUB_URL: hubUrl,
-        SAFEHARBOR_HUB_TOKEN: enrolled.deviceToken,
-        SAFEHARBOR_DEVICE_ID: 'child-agent-1',
         SAFEHARBOR_HUB_SYNC_INTERVAL_MS: '5000'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });
     await waitForOutput(child, 'listening');
+    const childConfig = JSON.parse(fs.readFileSync(path.join(childHome, 'config.json'), 'utf8'));
+    assert.equal(childConfig.deviceId, 'child-agent-1');
+    assert.equal(childConfig.hubUrl, hubUrl);
+    assert.match(childConfig.hubToken, /^[a-f0-9]{64}$/);
+    const childUrl = `http://127.0.0.1:${childPort}`;
+    await postJson(`${childUrl}/policy/evaluate`, childConfig.token, {
+      url: 'https://example.com/',
+      timestamp: '2026-05-10T13:00:00.000Z',
+      source: 'test-child-agent'
+    });
     await waitFor(async () => {
       const reports = await getJson(`${hubUrl}/reports/local?deviceId=child-agent-1`, hubConfig.token);
       return reports.reports.counts.blockedVisits >= 1;
-    });
+    }, 10000);
 
     const hubReports = await getJson(`${hubUrl}/reports/local?deviceId=child-agent-1`, hubConfig.token);
     assert.equal(hubReports.reports.counts.blockedVisits, 1);

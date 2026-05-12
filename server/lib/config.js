@@ -7,6 +7,13 @@ const path = require('path');
 
 const DEFAULT_PORT = 43718;
 const DEFAULT_HOST = '127.0.0.1';
+const DEFAULT_ALERT_PREFERENCES = {
+  repeatedBlock: true,
+  scheduleViolation: true,
+  tamperSignal: true,
+  deviceOffline: true,
+  deviceRevoked: true
+};
 
 function resolveBaseDir(env = process.env) {
   return env.SAFEHARBOR_HOME
@@ -66,9 +73,15 @@ function loadConfig(paths, env = process.env) {
       token: existing.parentToken,
       parentToken: existing.parentToken,
       deviceToken: existing.deviceToken,
+      deviceId: stringOr(env.SAFEHARBOR_DEVICE_ID, existing.deviceId || ''),
+      profileId: stringOr(existing.profileId, ''),
+      enrolledDevice: normalizeEnrolledDevice(existing.enrolledDevice),
+      hubUrl: stringOr(env.SAFEHARBOR_HUB_URL, existing.hubUrl || ''),
+      hubToken: stringOr(env.SAFEHARBOR_HUB_TOKEN, existing.hubToken || ''),
       hubLastEventId: Number(existing.hubLastEventId || 0),
       hubLastSyncAt: existing.hubLastSyncAt || null,
-      hubLastSyncError: existing.hubLastSyncError || null
+      hubLastSyncError: existing.hubLastSyncError || null,
+      alertPreferences: normalizeAlertPreferences(existing.alertPreferences)
     };
     validateConfig(next);
     if (changed) writeJson(paths.config, { ...existing, ...next });
@@ -83,9 +96,15 @@ function loadConfig(paths, env = process.env) {
     token: parentToken,
     parentToken,
     deviceToken: crypto.randomBytes(32).toString('hex'),
+    deviceId: stringOr(env.SAFEHARBOR_DEVICE_ID, ''),
+    profileId: '',
+    enrolledDevice: null,
+    hubUrl: stringOr(env.SAFEHARBOR_HUB_URL, ''),
+    hubToken: stringOr(env.SAFEHARBOR_HUB_TOKEN, ''),
     hubLastEventId: 0,
     hubLastSyncAt: null,
-    hubLastSyncError: null
+    hubLastSyncError: null,
+    alertPreferences: { ...DEFAULT_ALERT_PREFERENCES }
   };
   validateConfig(created);
   writeJson(paths.config, created);
@@ -114,9 +133,45 @@ function validateConfig(value) {
   if (!Number.isFinite(value.hubLastEventId) || value.hubLastEventId < 0) {
     throw new Error('Invalid hub sync cursor in config.');
   }
+  if (typeof value.deviceId !== 'string') {
+    throw new Error('Invalid device ID in config.');
+  }
+  if (typeof value.profileId !== 'string') {
+    throw new Error('Invalid profile ID in config.');
+  }
+  if (typeof value.hubUrl !== 'string') {
+    throw new Error('Invalid hub URL in config.');
+  }
+  if (typeof value.hubToken !== 'string') {
+    throw new Error('Invalid hub token in config.');
+  }
+}
+
+function normalizeAlertPreferences(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return Object.fromEntries(
+    Object.entries(DEFAULT_ALERT_PREFERENCES)
+      .map(([key, fallback]) => [key, source[key] == null ? fallback : Boolean(source[key])])
+  );
+}
+
+function normalizeEnrolledDevice(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return {
+    id: stringOr(value.id, ''),
+    name: stringOr(value.name, ''),
+    platform: stringOr(value.platform, ''),
+    profileId: stringOr(value.profileId, ''),
+    createdAt: stringOr(value.createdAt, '')
+  };
+}
+
+function stringOr(value, fallback) {
+  return typeof value === 'string' ? value : fallback;
 }
 
 module.exports = {
+  DEFAULT_ALERT_PREFERENCES,
   DEFAULT_HOST,
   DEFAULT_PORT,
   createPaths,
