@@ -5,6 +5,7 @@
   "description": "SafeHarbor parental controls companion extension.",
   "permissions": [
     "activeTab",
+    "declarativeNetRequest",
     "scripting",
     "storage",
     "tabs",

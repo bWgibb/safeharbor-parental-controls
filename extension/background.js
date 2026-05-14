@@ -1,6 +1,19 @@
 'use strict';
 
+importScripts('policy-cache.js');
+
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:43718';
+const POLICY_CACHE_KEY = 'safeharborPolicyCache';
+const POLICY_REFRESH_MS = 5 * 60 * 1000;
+const {
+  DYNAMIC_RULE_ID_END,
+  DYNAMIC_RULE_ID_START,
+  compileDynamicRules,
+  evaluateCachedPolicy
+} = SafeHarborPolicyCache;
+
+refreshPolicyCache()
+  .catch(() => {});
 
 chrome.webNavigation.onBeforeNavigate.addListener(details => {
   if (details.frameId !== 0 || details.tabId < 0) return;
@@ -47,11 +60,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function getSettings() {
   const values = await chrome.storage.local.get({
     serverUrl: DEFAULT_SERVER_URL,
-    token: ''
+    token: '',
+    [POLICY_CACHE_KEY]: null
   });
   return {
     serverUrl: trimTrailingSlash(values.serverUrl || DEFAULT_SERVER_URL),
-    token: values.token || ''
+    token: values.token || '',
+    policyCache: values[POLICY_CACHE_KEY] || null
   };
 }
 
@@ -155,11 +170,44 @@ async function sendCurrentPage(includeReadableText) {
 
 async function evaluateNavigation(details) {
   const settings = await getSettings();
+  const cachedDecision = settings.policyCache
+    ? evaluateCachedPolicy({
+      url: details.url,
+      timestamp: new Date().toISOString(),
+      policy: settings.policyCache.policy
+    })
+    : null;
+  if (cachedDecision && cachedDecision.action === 'block') {
+    await showBlockPage(details.tabId, details.url, cachedDecision, 'NO');
+    if (settings.token) {
+      sendPolicyEvaluation(settings, details)
+        .then(body => updatePolicyFromEvaluation(settings, body))
+        .catch(error => reportAgentUnavailable(settings, details.url, error));
+    }
+    return;
+  }
+
   if (!settings.token) {
     await showBadge(details.tabId, 'SET', '#8a6116');
     return;
   }
 
+  try {
+    const body = await sendPolicyEvaluation(settings, details);
+    updatePolicyFromEvaluation(settings, body)
+      .catch(() => {});
+    if (body.decision && body.decision.action === 'block') {
+      await showBlockPage(details.tabId, details.url, body.decision, 'NO');
+      return;
+    }
+    await chrome.action.setBadgeText({ text: '', tabId: details.tabId });
+  } catch (error) {
+    await reportAgentUnavailable(settings, details.url, error);
+    throw error;
+  }
+}
+
+async function sendPolicyEvaluation(settings, details) {
   const response = await fetch(`${settings.serverUrl}/policy/evaluate`, {
     method: 'POST',
     headers: {
@@ -176,20 +224,28 @@ async function evaluateNavigation(details) {
   if (!response.ok || !body.ok) {
     throw new Error(body.error || `Server returned ${response.status}`);
   }
+  return body;
+}
 
-  if (body.decision && body.decision.action === 'block') {
-    const blockUrl = chrome.runtime.getURL(`block.html?${new URLSearchParams({
-      url: details.url,
-      reason: body.decision.reason || 'Blocked by SafeHarbor',
-      ruleId: body.decision.ruleId || '',
-      timestamp: body.decision.timestamp || new Date().toISOString()
-    })}`);
-    await chrome.tabs.update(details.tabId, { url: blockUrl });
-    await showBadge(details.tabId, 'NO', '#a22222');
+async function showBlockPage(tabId, url, decision, badgeText) {
+  const blockUrl = chrome.runtime.getURL(`block.html?${new URLSearchParams({
+    url,
+    reason: decision.reason || 'Blocked by SafeHarbor',
+    ruleId: decision.ruleId || '',
+    timestamp: decision.timestamp || new Date().toISOString()
+  })}`);
+  await chrome.tabs.update(tabId, { url: blockUrl });
+  await showBadge(tabId, badgeText, '#a22222');
+}
+
+async function updatePolicyFromEvaluation(settings, body) {
+  if (body && body.policy && body.policyUpdatedAt) {
+    await cachePolicy(body.policy, body.policyUpdatedAt);
     return;
   }
-
-  await chrome.action.setBadgeText({ text: '', tabId: details.tabId });
+  if (!settings.policyCache || Date.now() - Date.parse(settings.policyCache.cachedAt || 0) > POLICY_REFRESH_MS) {
+    await refreshPolicyCache(settings);
+  }
 }
 
 async function checkHealth() {
@@ -215,8 +271,61 @@ async function checkHealth() {
       throw new Error(policyBody.error || `Policy check returned ${policyResponse.status}`);
     }
     body.policy = policyBody.policy;
+    body.policyUpdatedAt = policyBody.policyUpdatedAt || null;
+    await cachePolicy(policyBody.policy, policyBody.policyUpdatedAt || null);
   }
   return { ok: true, body };
+}
+
+async function refreshPolicyCache(existingSettings = null) {
+  const settings = existingSettings || await getSettings();
+  if (!settings.token) return null;
+  const response = await fetch(`${settings.serverUrl}/policy`, {
+    headers: { authorization: `Bearer ${settings.token}` }
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.ok) throw new Error(body.error || `Policy check returned ${response.status}`);
+  await cachePolicy(body.policy, body.policyUpdatedAt || null);
+  return body.policy;
+}
+
+async function cachePolicy(policy, policyUpdatedAt) {
+  const cache = {
+    policy,
+    policyUpdatedAt: policyUpdatedAt || null,
+    cachedAt: new Date().toISOString()
+  };
+  await chrome.storage.local.set({ [POLICY_CACHE_KEY]: cache });
+  await syncDynamicPolicyRules(policy);
+}
+
+async function syncDynamicPolicyRules(policy) {
+  if (!chrome.declarativeNetRequest || !chrome.declarativeNetRequest.updateDynamicRules) return;
+  const existing = await chrome.declarativeNetRequest.getDynamicRules();
+  const removeRuleIds = existing
+    .map(rule => rule.id)
+    .filter(id => id >= DYNAMIC_RULE_ID_START && id <= DYNAMIC_RULE_ID_END);
+  const addRules = compileDynamicRules(policy);
+  await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds, addRules });
+}
+
+async function reportAgentUnavailable(settings, url, error) {
+  if (!settings.token) return;
+  await fetch(`${settings.serverUrl}/events`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${settings.token}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      type: 'tamper_signal',
+      timestamp: new Date().toISOString(),
+      url,
+      reason: `Local SafeHarbor agent unavailable: ${error.message}`,
+      source: 'chrome-extension',
+      metadata: { signal: 'agent_unavailable' }
+    })
+  }).catch(() => {});
 }
 
 async function openStatusPage() {

@@ -139,3 +139,32 @@ test('creates enrollment codes and registers devices', () => {
 
   store.close();
 });
+
+test('reports group daily summaries by America Regina day', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'safeharbor-report-time-'));
+  const store = new EventStore(path.join(dir, 'test.sqlite'));
+  store.seed({
+    profile: defaultProfile(),
+    device: defaultDevice(),
+    policy: defaultPolicy()
+  });
+
+  store.recordEvent({
+    type: 'visit_decision',
+    timestamp: '2026-05-10T05:30:00.000Z',
+    url: 'https://late.example.org/',
+    domain: 'late.example.org',
+    profileId: 'default-child',
+    deviceId: 'local-device',
+    decision: 'allow',
+    source: 'test'
+  });
+
+  const reports = store.reports({
+    dailySince: '2026-05-09T00:00:00.000Z',
+    onlineSince: '2026-05-09T00:00:00.000Z'
+  });
+  assert.ok(reports.dailySummary.some(row => row.day === '2026-05-09' && row.total === 1));
+
+  store.close();
+});

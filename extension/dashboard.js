@@ -14,6 +14,8 @@ const REGINA_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
 let settings = null;
 let state = null;
 let policy = null;
+let originalPolicy = null;
+let policyDirty = false;
 
 const $ = id => document.getElementById(id);
 const hasChromeApi = typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
@@ -23,9 +25,11 @@ $('options').addEventListener('click', openOptions);
 $('backupDb').addEventListener('click', backupDatabase);
 $('exportPolicy').addEventListener('click', exportPolicy);
 $('importPolicy').addEventListener('click', importPolicy);
+$('savePolicy').addEventListener('click', savePolicy);
+$('discardPolicy').addEventListener('click', discardPolicyDraft);
 $('defaultAction').addEventListener('change', () => {
   policy.defaultAction = $('defaultAction').value;
-  savePolicy();
+  markPolicyDirty();
 });
 $('allowForm').addEventListener('submit', event => addDomain(event, 'allowedDomains', 'allowDomain', 'allow'));
 $('blockForm').addEventListener('submit', event => addDomain(event, 'blockedDomains', 'blockDomain', 'block'));
@@ -37,10 +41,11 @@ $('clearFilters').addEventListener('click', clearReportFilters);
 $('exportCsv').addEventListener('click', () => exportReport('csv'));
 $('exportJson').addEventListener('click', () => exportReport('json'));
 
-for (const id of ['alertBlocked', 'alertTamper', 'alertOffline']) {
+for (const id of ['alertRepeatedBlock', 'alertSchedule', 'alertTamper', 'alertOffline', 'alertRevoked']) {
   $(id).addEventListener('change', saveAlertPrefs);
 }
 
+renderScheduleDayPicker();
 loadDashboard();
 
 async function loadDashboard() {
@@ -55,6 +60,8 @@ async function loadDashboard() {
 
     state = await fetchJson('/status');
     policy = structuredClone(state.policy);
+    originalPolicy = structuredClone(state.policy);
+    policyDirty = false;
     renderDashboard();
     setStatus(`Updated ${formatReginaTime(new Date().toISOString())}.`, 'success');
   } catch (error) {
@@ -74,18 +81,22 @@ function loadWebSettings(defaults = {}) {
   return {
     serverUrl: localStorage.getItem('safeharborServerUrl') || window.location.origin || defaults.serverUrl || DEFAULT_SERVER_URL,
     token: queryToken || localStorage.getItem('safeharborToken') || defaults.token || '',
-    alertBlocked: localStorage.getItem('safeharborAlertBlocked') !== 'false',
+    alertRepeatedBlock: localStorage.getItem('safeharborAlertRepeatedBlock') !== 'false',
+    alertSchedule: localStorage.getItem('safeharborAlertSchedule') !== 'false',
     alertTamper: localStorage.getItem('safeharborAlertTamper') !== 'false',
-    alertOffline: localStorage.getItem('safeharborAlertOffline') !== 'false'
+    alertOffline: localStorage.getItem('safeharborAlertOffline') !== 'false',
+    alertRevoked: localStorage.getItem('safeharborAlertRevoked') !== 'false'
   };
 }
 
 function saveWebSettings(values) {
   if (values.serverUrl != null) localStorage.setItem('safeharborServerUrl', values.serverUrl);
   if (values.token != null) localStorage.setItem('safeharborToken', values.token);
-  if (values.alertBlocked != null) localStorage.setItem('safeharborAlertBlocked', String(Boolean(values.alertBlocked)));
+  if (values.alertRepeatedBlock != null) localStorage.setItem('safeharborAlertRepeatedBlock', String(Boolean(values.alertRepeatedBlock)));
+  if (values.alertSchedule != null) localStorage.setItem('safeharborAlertSchedule', String(Boolean(values.alertSchedule)));
   if (values.alertTamper != null) localStorage.setItem('safeharborAlertTamper', String(Boolean(values.alertTamper)));
   if (values.alertOffline != null) localStorage.setItem('safeharborAlertOffline', String(Boolean(values.alertOffline)));
+  if (values.alertRevoked != null) localStorage.setItem('safeharborAlertRevoked', String(Boolean(values.alertRevoked)));
 }
 
 async function fetchJson(path, options = {}) {
@@ -178,11 +189,18 @@ function renderEnrollmentCodes() {
 
 function renderPolicy() {
   $('defaultAction').value = policy.defaultAction;
+  renderPolicyDraftControls();
   renderDomainList('allowList', 'allowedDomains');
   renderDomainList('blockList', 'blockedDomains');
   renderCategories();
   renderSchedules();
   renderOverrides();
+}
+
+function renderPolicyDraftControls() {
+  $('savePolicy').disabled = !policyDirty;
+  $('discardPolicy').disabled = !policyDirty;
+  $('policyDraftStatus').textContent = policyDirty ? 'Unsaved policy changes' : '';
 }
 
 function renderDomainList(targetId, listName) {
@@ -192,7 +210,8 @@ function renderDomainList(targetId, listName) {
     row.append(el('span', rule.value || rule.domain));
     row.append(removeButton(() => {
       policy[listName] = policy[listName].filter(item => item.id !== rule.id);
-      savePolicy();
+      markPolicyDirty();
+      renderPolicy();
     }));
     return row;
   });
@@ -213,7 +232,8 @@ function renderCategories() {
       if (input.checked) next.add(category);
       else next.delete(category);
       policy.blockedCategories = Array.from(next);
-      savePolicy();
+      markPolicyDirty();
+      renderPolicy();
     });
     label.append(input, document.createTextNode(category));
     return label;
@@ -222,10 +242,12 @@ function renderCategories() {
 
 function renderSchedules() {
   const nodes = policy.schedules.map(rule => {
-    const text = `${rule.action} ${rule.start}-${rule.end} ${rule.reason || ''}`;
+    const days = Array.isArray(rule.days) && rule.days.length ? ` ${rule.days.join(',')}` : '';
+    const text = `${rule.action} ${rule.start}-${rule.end}${days} ${rule.reason || ''}`;
     return stackItem(text, () => {
       policy.schedules = policy.schedules.filter(item => item.id !== rule.id);
-      savePolicy();
+      markPolicyDirty();
+      renderPolicy();
     });
   });
   $('scheduleList').replaceChildren(...nodes);
@@ -236,7 +258,8 @@ function renderOverrides() {
     const text = `${rule.action} ${rule.value || rule.domain} until ${formatReginaTime(rule.expiresAt)}`;
     return stackItem(text, () => {
       policy.temporaryOverrides = policy.temporaryOverrides.filter(item => item.id !== rule.id);
-      savePolicy();
+      markPolicyDirty();
+      renderPolicy();
     });
   });
   $('overrideList').replaceChildren(...nodes);
@@ -311,9 +334,11 @@ function renderTable(targetId, items, mapper) {
 
 function renderAlertPrefs() {
   const preferences = state.alertPreferences || {};
-  $('alertBlocked').checked = preferences.repeatedBlock !== false && preferences.scheduleViolation !== false;
+  $('alertRepeatedBlock').checked = preferences.repeatedBlock !== false;
+  $('alertSchedule').checked = preferences.scheduleViolation !== false;
   $('alertTamper').checked = preferences.tamperSignal !== false;
   $('alertOffline').checked = preferences.deviceOffline !== false;
+  $('alertRevoked').checked = preferences.deviceRevoked !== false;
 }
 
 function addDomain(event, listName, inputId, action) {
@@ -328,20 +353,56 @@ function addDomain(event, listName, inputId, action) {
     category: 'custom'
   });
   input.value = '';
-  savePolicy();
+  markPolicyDirty();
+  renderPolicy();
 }
 
 function addSchedule(event) {
   event.preventDefault();
+  const days = selectedScheduleDays();
   policy.schedules.push({
     id: `schedule-${Date.now()}`,
     action: $('scheduleAction').value,
     start: $('scheduleStart').value,
     end: $('scheduleEnd').value,
-    reason: $('scheduleReason').value.trim() || 'Scheduled rule'
+    reason: $('scheduleReason').value.trim() || 'Scheduled rule',
+    days
   });
   $('scheduleReason').value = '';
-  savePolicy();
+  markPolicyDirty();
+  renderPolicy();
+}
+
+function renderScheduleDayPicker() {
+  const days = [
+    ['sun', 'Sun'],
+    ['mon', 'Mon'],
+    ['tue', 'Tue'],
+    ['wed', 'Wed'],
+    ['thu', 'Thu'],
+    ['fri', 'Fri'],
+    ['sat', 'Sat']
+  ];
+  $('scheduleDays').replaceChildren(...days.map(([value, labelText]) => {
+    const label = document.createElement('label');
+    label.className = 'check-row';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = value;
+    label.append(input, document.createTextNode(labelText));
+    return label;
+  }));
+}
+
+function selectedScheduleDays() {
+  return Array.from($('scheduleDays').querySelectorAll('input:checked'))
+    .map(input => input.value);
+}
+
+function markPolicyDirty() {
+  policyDirty = JSON.stringify(policy) !== JSON.stringify(originalPolicy);
+  renderPolicyDraftControls();
+  setStatus(policyDirty ? 'Policy changes are not saved yet.' : '', '');
 }
 
 function addOverride(event) {
@@ -357,10 +418,12 @@ function addOverride(event) {
     reason: 'Parent temporary override'
   });
   $('overrideDomain').value = '';
-  savePolicy();
+  markPolicyDirty();
+  renderPolicy();
 }
 
 async function savePolicy() {
+  if (!policyDirty) return;
   setStatus('Saving policy...', '');
   try {
     const result = await fetchJson('/policy', {
@@ -368,10 +431,20 @@ async function savePolicy() {
       body: JSON.stringify({ policy })
     });
     policy = structuredClone(result.policy);
+    originalPolicy = structuredClone(result.policy);
+    policyDirty = false;
     await loadDashboard();
   } catch (error) {
     setStatus(error.message, 'error');
+    renderPolicyDraftControls();
   }
+}
+
+function discardPolicyDraft() {
+  policy = structuredClone(originalPolicy || state.policy);
+  policyDirty = false;
+  renderPolicy();
+  setStatus('Policy changes discarded.', '');
 }
 
 async function revokeDevice(device) {
@@ -512,16 +585,18 @@ async function downloadAuthenticated(path, fileName) {
 
 async function saveAlertPrefs() {
   const preferences = {
-    repeatedBlock: $('alertBlocked').checked,
-    scheduleViolation: $('alertBlocked').checked,
+    repeatedBlock: $('alertRepeatedBlock').checked,
+    scheduleViolation: $('alertSchedule').checked,
     tamperSignal: $('alertTamper').checked,
     deviceOffline: $('alertOffline').checked,
-    deviceRevoked: $('alertOffline').checked
+    deviceRevoked: $('alertRevoked').checked
   };
   const values = {
-    alertBlocked: $('alertBlocked').checked,
+    alertRepeatedBlock: $('alertRepeatedBlock').checked,
+    alertSchedule: $('alertSchedule').checked,
     alertTamper: $('alertTamper').checked,
-    alertOffline: $('alertOffline').checked
+    alertOffline: $('alertOffline').checked,
+    alertRevoked: $('alertRevoked').checked
   };
   try {
     const result = await fetchJson('/alerts/preferences', {

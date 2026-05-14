@@ -11,7 +11,7 @@ const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, 'manifest.js
 
 assert.equal(manifest.manifest_version, 3);
 assert.equal(manifest.background.service_worker, 'background.js');
-for (const permission of ['storage', 'tabs', 'webNavigation', 'scripting']) {
+for (const permission of ['storage', 'tabs', 'webNavigation', 'scripting', 'declarativeNetRequest']) {
   assert.ok(manifest.permissions.includes(permission), `missing permission: ${permission}`);
 }
 for (const file of [
@@ -20,6 +20,7 @@ for (const file of [
   'block.js',
   'dashboard.html',
   'dashboard.js',
+  'policy-cache.js',
   'options.html',
   'options.js',
   'popup.html',
@@ -30,6 +31,7 @@ for (const file of [
 
 const background = fs.readFileSync(path.join(extensionDir, 'background.js'), 'utf8');
 assert.match(background, /webNavigation\.onBeforeNavigate/);
+assert.match(background, /declarativeNetRequest/);
 assert.match(background, /\/policy\/evaluate/);
 assert.match(background, /block\.html/);
 

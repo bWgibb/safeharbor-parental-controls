@@ -1,5 +1,6 @@
 param(
-  [switch]$Uninstall
+  [switch]$Uninstall,
+  [switch]$SkipHealthCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,6 +24,12 @@ if (!$NodeCommand) {
 }
 
 $Node = $NodeCommand.Source
+$NodeMajor = & $Node -p "Number(process.versions.node.split('.')[0])"
+if ($NodeMajor -lt 20) {
+  $NodeVersion = & $Node -v
+  throw "Node.js 20 LTS or newer is required. Found: $NodeVersion"
+}
+
 $QuotedNode = $Node.Replace("'", "''")
 $QuotedServer = $Server.Replace("'", "''")
 $PowerShellArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command `"& '$QuotedNode' '$QuotedServer'`""
@@ -42,6 +49,25 @@ Register-ScheduledTask `
   -Force | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
+
+if (!$SkipHealthCheck) {
+  $HealthUrl = "http://127.0.0.1:43718/health"
+  $Healthy = $false
+  for ($i = 0; $i -lt 20; $i++) {
+    try {
+      $Response = Invoke-RestMethod -Uri $HealthUrl -TimeoutSec 2
+      if ($Response.ok -and $Response.app -eq "SafeHarbor") {
+        $Healthy = $true
+        break
+      }
+    } catch {
+      Start-Sleep -Seconds 1
+    }
+  }
+  if (!$Healthy) {
+    throw "SafeHarbor scheduled task started but health check failed at $HealthUrl"
+  }
+}
 
 Write-Host "Installed and started scheduled task: $TaskName"
 Write-Host "Server: $Server"

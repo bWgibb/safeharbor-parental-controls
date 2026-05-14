@@ -86,7 +86,11 @@ function createHubSync({
       const nextPolicy = normalizePolicy(policyBody.policy);
       const validationError = validatePolicy(nextPolicy);
       if (validationError) throw new Error(`Hub policy sync failed: ${validationError}`);
-      store.upsertPolicy(nextPolicy);
+      const currentPolicy = store.getPolicyRecord(nextPolicy.profileId);
+      const nextUpdatedAt = policyBody.policyUpdatedAt || policyBody.policyRevision || null;
+      if (!currentPolicy || !nextUpdatedAt || Date.parse(nextUpdatedAt) > Date.parse(currentPolicy.updatedAt || 0)) {
+        store.upsertPolicy(nextPolicy, { updatedAt: nextUpdatedAt || undefined });
+      }
     }
 
     const events = store.eventsAfterId(config.hubLastEventId, 100);

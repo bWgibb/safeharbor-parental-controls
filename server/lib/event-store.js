@@ -280,8 +280,8 @@ class EventStore {
     return row ? { id: row.id, policy: JSON.parse(row.configJson), updatedAt: row.updatedAt } : null;
   }
 
-  upsertPolicy(policy) {
-    const now = new Date().toISOString();
+  upsertPolicy(policy, options = {}) {
+    const now = options.updatedAt || new Date().toISOString();
     this.db.prepare(`
       INSERT INTO policies (id, profile_id, name, default_action, config_json, updated_at)
       VALUES (@id, @profileId, @name, @defaultAction, @configJson, @updatedAt)
@@ -488,6 +488,8 @@ class EventStore {
 
   reports(filters = {}) {
     const filter = buildEventFilter(filters);
+    const dailySince = filters.dailySince || new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const onlineSince = filters.onlineSince || new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const counts = this.db.prepare(`
       SELECT
         COUNT(*) AS totalEvents,
@@ -529,17 +531,17 @@ class EventStore {
 
     const dailySummary = this.db.prepare(`
       SELECT
-        substr(timestamp, 1, 10) AS day,
+        date(timestamp, '-6 hours') AS day,
         COUNT(*) AS total,
         SUM(CASE WHEN decision = 'allow' THEN 1 ELSE 0 END) AS allowed,
         SUM(CASE WHEN decision = 'block' THEN 1 ELSE 0 END) AS blocked
       FROM events
-      WHERE timestamp >= datetime('now', '-14 days')
+      WHERE timestamp >= ?
         ${filter.and}
       GROUP BY day
       ORDER BY day DESC
       LIMIT 14
-    `).all(...filter.params).map(row => ({
+    `).all(dailySince, ...filter.params).map(row => ({
       day: row.day,
       total: row.total || 0,
       allowed: row.allowed || 0,
@@ -559,9 +561,9 @@ class EventStore {
       SELECT COUNT(DISTINCT substr(timestamp, 1, 16)) AS activeMinutes
       FROM events
       WHERE type = 'visit_decision'
-        AND timestamp >= datetime('now', '-7 days')
+        AND timestamp >= ?
         ${filter.and}
-    `).get(...filter.params);
+    `).get(onlineSince, ...filter.params);
 
     const scheduleViolations = this.db.prepare(`
       SELECT COUNT(*) AS count
@@ -653,16 +655,18 @@ class EventStore {
 
   generateAlerts(timestamp = new Date().toISOString(), preferences = {}) {
     const enabled = key => preferences[key] !== false;
+    const parsedTimestamp = new Date(timestamp);
+    const recentSince = new Date((Number.isNaN(parsedTimestamp.getTime()) ? Date.now() : parsedTimestamp.getTime()) - 24 * 60 * 60 * 1000).toISOString();
     if (enabled('repeatedBlock')) {
       const recentBlocks = this.db.prepare(`
         SELECT device_id AS deviceId, profile_id AS profileId, domain, COUNT(*) AS count, MAX(id) AS eventId
         FROM events
         WHERE decision = 'block'
-          AND timestamp >= datetime('now', '-24 hours')
+          AND timestamp >= ?
           AND device_id IS NOT NULL
         GROUP BY device_id, domain
         HAVING count >= 3
-      `).all();
+      `).all(recentSince);
 
       for (const row of recentBlocks) {
         this.upsertAlert({
@@ -685,7 +689,7 @@ class EventStore {
         SELECT device_id AS deviceId, profile_id AS profileId, COUNT(*) AS count, MAX(id) AS eventId
         FROM events
         WHERE decision = 'block'
-          AND timestamp >= datetime('now', '-24 hours')
+          AND timestamp >= ?
           AND device_id IS NOT NULL
           AND (
             rule_id LIKE '%schedule%'
@@ -694,7 +698,7 @@ class EventStore {
           )
         GROUP BY device_id
         HAVING count >= 1
-      `).all();
+      `).all(recentSince);
 
       for (const row of scheduleBlocks) {
         this.upsertAlert({

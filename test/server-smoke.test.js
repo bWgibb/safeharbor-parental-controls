@@ -151,6 +151,26 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
     assert.equal(duplicateSync.duplicates, 2);
     assert.equal(duplicateSync.received, 2);
 
+    const oversizedSync = await fetch(`${baseUrl}/sync/events`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${enrolled.deviceToken}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        deviceId: 'windows-test-device',
+        profileId: 'default-child',
+        events: Array.from({ length: 101 }, (_, index) => ({
+          localEventId: `oversize-${index}`,
+          type: 'visit_decision',
+          timestamp: '2026-05-10T12:20:00.000Z'
+        }))
+      })
+    });
+    const oversizedBody = await oversizedSync.json();
+    assert.equal(oversizedSync.status, 413);
+    assert.equal(oversizedBody.error, 'sync_batch_too_large');
+
     const reports = await getJson(`${baseUrl}/reports/local`, config.token);
     const deviceSummary = reports.reports.deviceSummary.find(item => item.deviceId === 'windows-test-device');
     assert.equal(deviceSummary.total, 4);
@@ -169,6 +189,18 @@ test('server starts, evaluates policy, and reports SQLite activity', async () =>
 
     const policyExport = await getJson(`${baseUrl}/policy/export.json`, config.token);
     assert.equal(policyExport.policy.id, 'default-policy');
+
+    const invalidPolicy = await fetch(`${baseUrl}/policy/import`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${config.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ ...policyExport.policy, defaultAction: 'permit' })
+    });
+    const invalidPolicyBody = await invalidPolicy.json();
+    assert.equal(invalidPolicy.status, 400);
+    assert.equal(invalidPolicyBody.error, 'invalid_default_action');
 
     const deviceReports = await fetch(`${baseUrl}/reports/local`, {
       headers: { authorization: `Bearer ${config.deviceToken}` }

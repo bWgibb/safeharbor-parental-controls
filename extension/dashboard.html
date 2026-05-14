@@ -37,7 +37,14 @@
       </div>
 
       <div class="panel">
-        <h2>Policy</h2>
+        <div class="section-header">
+          <h2>Policy</h2>
+          <div class="top-actions">
+            <button id="discardPolicy" type="button">Discard</button>
+            <button id="savePolicy" class="primary" type="button">Save</button>
+          </div>
+        </div>
+        <p id="policyDraftStatus" class="draft-status"></p>
         <label>
           Default
           <select id="defaultAction">
@@ -76,6 +83,7 @@
           <input id="scheduleStart" type="time" value="22:00">
           <input id="scheduleEnd" type="time" value="06:00">
           <input id="scheduleReason" type="text" placeholder="reason" autocomplete="off">
+          <div id="scheduleDays" class="day-picker"></div>
           <button type="submit">Add</button>
         </form>
         <div id="scheduleList" class="stack"></div>
@@ -98,8 +106,12 @@
       <div class="panel">
         <h2>Alerts</h2>
         <label class="check-row">
-          <input id="alertBlocked" type="checkbox">
+          <input id="alertRepeatedBlock" type="checkbox">
           Blocked attempts
+        </label>
+        <label class="check-row">
+          <input id="alertSchedule" type="checkbox">
+          Schedule violations
         </label>
         <label class="check-row">
           <input id="alertTamper" type="checkbox">
@@ -108,6 +120,10 @@
         <label class="check-row">
           <input id="alertOffline" type="checkbox">
           Agent offline
+        </label>
+        <label class="check-row">
+          <input id="alertRevoked" type="checkbox">
+          Device revoked
         </label>
         <div id="alerts" class="stack alert-list"></div>
       </div>

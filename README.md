@@ -329,4 +329,10 @@ npm run check
 npm test
 ```
 
-The tests cover the rule engine, SQLite event store, and a server smoke path that evaluates the default blocked domain.
+The tests cover the rule engine, SQLite event store, cached extension policy behavior, sync idempotency and limits, reporting date boundaries, and server smoke paths.
+
+For a real Chromium extension smoke test, install Playwright and run:
+
+```sh
+npm run smoke:browser
+```

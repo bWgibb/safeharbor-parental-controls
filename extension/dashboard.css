@@ -98,6 +98,11 @@ button.primary,
   color: #ffffff;
 }
 
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 input,
 select {
   background: #ffffff;
@@ -144,6 +149,14 @@ label {
   font-weight: 650;
   margin-bottom: 16px;
   padding: 12px 14px;
+}
+
+.draft-status {
+  color: #6f4b00;
+  font-size: 13px;
+  font-weight: 650;
+  min-height: 18px;
+  padding-bottom: 10px;
 }
 
 .layout,
@@ -214,6 +227,17 @@ label {
   justify-content: flex-start;
 }
 
+.day-picker {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.day-picker .check-row {
+  justify-content: center;
+  padding: 6px;
+}
+
 .pairing-code {
   color: #166a5b;
   font-size: 28px;
@@ -273,5 +297,9 @@ td {
   .section-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .day-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

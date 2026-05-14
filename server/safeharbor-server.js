@@ -20,7 +20,10 @@ const {
   sendText,
   staticContentType
 } = require('./lib/http-utils');
+const { createPolicyHandlers } = require('./lib/policy-handlers');
 const { evaluatePolicy, normalizePolicy } = require('./lib/policy-engine');
+const { validateNormalizedPolicy, validateRawPolicy } = require('./lib/policy-validation');
+const { parseReportFilters } = require('./lib/report-time');
 
 const APP_NAME = 'SafeHarbor';
 const VERSION = '0.3.0';
@@ -72,6 +75,22 @@ const {
   requireDeviceOrParent,
   requireParent
 } = createAuth({ config, store, defaultDevice, sendJson });
+const policyHandlers = createPolicyHandlers({
+  asString,
+  domainFromUrl,
+  evaluatePolicy,
+  getDefaultContext,
+  normalizePolicy,
+  nowIso,
+  readBody,
+  requireDeviceForIdOrParent,
+  requireDeviceOrParent,
+  requireParent,
+  sendJson,
+  store,
+  validateNormalizedPolicy,
+  validateRawPolicy
+});
 
 if (args.has('--print-config')) {
   process.stdout.write(JSON.stringify(configBody(), null, 2) + '\n');
@@ -358,27 +377,6 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;');
 }
 
-function parseReportFilters(searchParams) {
-  const dateFrom = asString(searchParams.get('dateFrom'));
-  const dateTo = asString(searchParams.get('dateTo'));
-  return {
-    deviceId: asString(searchParams.get('deviceId')),
-    profileId: asString(searchParams.get('profileId')),
-    dateFrom: dateFrom ? startOfDay(dateFrom) : '',
-    dateTo: dateTo ? endOfDay(dateTo) : ''
-  };
-}
-
-function startOfDay(value) {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T00:00:00.000Z`;
-  return value;
-}
-
-function endOfDay(value) {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T23:59:59.999Z`;
-  return value;
-}
-
 function csvEscape(value) {
   const text = value == null ? '' : String(value);
   if (!/[",\n\r]/.test(text)) return text;
@@ -477,48 +475,6 @@ async function handleCapture(req, res, fallbackType) {
   sendJson(res, 200, { ok: true, file: filePath });
 }
 
-async function handleEvaluate(req, res) {
-  const body = await readBody(req);
-  const { profile, device, policy } = getDefaultContext();
-  const profileId = asString(body.profileId, profile.id);
-  const deviceId = asString(body.deviceId, device.id);
-  if (!requireDeviceForIdOrParent(req, res, deviceId)) return;
-
-  const activePolicy = store.getPolicy(profileId) || policy;
-  const decision = evaluatePolicy({
-    url: asString(body.url),
-    timestamp: asString(body.timestamp, nowIso()),
-    profileId,
-    deviceId,
-    policy: activePolicy
-  });
-
-  store.recordEvent({
-    type: 'visit_decision',
-    timestamp: decision.timestamp,
-    url: asString(body.url),
-    domain: decision.domain,
-    title: asString(body.title),
-    profileId,
-    deviceId,
-    decision: decision.action,
-    ruleId: decision.ruleId,
-    reason: decision.reason,
-    category: decision.category,
-    source: asString(body.source, 'chrome-extension'),
-    metadata: { policyId: activePolicy.id }
-  });
-  store.touchDevice(deviceId, decision.timestamp);
-
-  sendJson(res, 200, {
-    ok: true,
-    profileId,
-    deviceId,
-    policyId: activePolicy.id,
-    decision
-  });
-}
-
 async function handleAction(req, res) {
   if (!requireDeviceOrParent(req, res)) return;
 
@@ -569,21 +525,6 @@ async function handleEvent(req, res) {
     metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {}
   });
   sendJson(res, 202, { ok: true, accepted: true });
-}
-
-async function handlePolicyUpdate(req, res) {
-  if (!requireParent(req, res)) return;
-
-  const body = await readBody(req);
-  const rawPolicy = body.policy && typeof body.policy === 'object' ? body.policy : body;
-  const policy = normalizePolicy(rawPolicy);
-  const validationError = validatePolicy(policy);
-  if (validationError) {
-    sendJson(res, 400, { ok: false, error: validationError });
-    return;
-  }
-  store.upsertPolicy(policy);
-  sendJson(res, 200, { ok: true, policy });
 }
 
 async function handleEnrollmentCodeCreate(req, res) {
@@ -699,6 +640,10 @@ async function handleSyncEvents(req, res) {
     sendJson(res, 400, { ok: false, error: 'events_required' });
     return;
   }
+  if (events.length > 100) {
+    sendJson(res, 413, { ok: false, error: 'sync_batch_too_large', maxEvents: 100, received: events.length });
+    return;
+  }
 
   const { device: fallbackDevice } = getDefaultContext();
   const syncedDevice = body.device && typeof body.device === 'object' ? body.device : null;
@@ -721,7 +666,7 @@ async function handleSyncEvents(req, res) {
   let duplicates = 0;
   const seenDeviceIds = new Set();
   let lastLocalEventId = null;
-  const processedEvents = events.slice(0, 100);
+  const processedEvents = events;
   for (const event of processedEvents) {
     const timestamp = asString(event.timestamp, nowIso());
     const deviceId = asString(event.deviceId, bodyDeviceId);
@@ -788,26 +733,9 @@ function syncPolicyBody(deviceId) {
     profile: store.getProfiles().find(item => item.id === profileId) || fallback.profile,
     policy: policyRecord ? policyRecord.policy : fallback.policy,
     policyUpdatedAt: policyRecord ? policyRecord.updatedAt : null,
+    policyRevision: policyRecord ? policyRecord.updatedAt : null,
     serverTime: nowIso()
   };
-}
-
-function validatePolicy(policy) {
-  if (!['allow', 'block'].includes(policy.defaultAction)) return 'invalid_default_action';
-  if (!policy.id) return 'policy_id_required';
-  if (!policy.profileId) return 'policy_profile_id_required';
-  const listNames = ['blockedDomains', 'allowedDomains', 'temporaryOverrides'];
-  for (const listName of listNames) {
-    for (const rule of policy[listName]) {
-      if (!rule.value && !rule.domain) return `${listName}_rule_domain_required`;
-    }
-  }
-  for (const rule of policy.schedules) {
-    if (!['allow', 'block'].includes(rule.action)) return 'schedule_action_invalid';
-    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(asString(rule.start))) return 'schedule_start_invalid';
-    if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(asString(rule.end))) return 'schedule_end_invalid';
-  }
-  return '';
 }
 
 async function handleTokenRotate(req, res) {
@@ -892,28 +820,6 @@ async function handleAlertPreferencesUpdate(req, res) {
   sendJson(res, 200, { ok: true, alertPreferences: config.alertPreferences });
 }
 
-async function handlePolicyImport(req, res) {
-  if (!requireParent(req, res)) return;
-
-  const body = await readBody(req);
-  const rawPolicy = body.policy && typeof body.policy === 'object' ? body.policy : body;
-  const policy = normalizePolicy(rawPolicy);
-  const validationError = validatePolicy(policy);
-  if (validationError) {
-    sendJson(res, 400, { ok: false, error: validationError });
-    return;
-  }
-  store.upsertPolicy(policy);
-  store.recordEvent({
-    type: 'policy_imported',
-    timestamp: nowIso(),
-    profileId: policy.profileId,
-    source: 'parent-dashboard',
-    metadata: { policyId: policy.id }
-  });
-  sendJson(res, 200, { ok: true, policy });
-}
-
 async function handleBackup(req, res) {
   if (!requireParent(req, res)) return;
 
@@ -930,7 +836,7 @@ const hubSync = createHubSync({
   nowIso,
   paths,
   store,
-  validatePolicy,
+  validatePolicy: validateNormalizedPolicy,
   writeJson
 });
 
@@ -969,6 +875,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'GET' && parsed.pathname === '/favicon.ico') {
+      sendText(res, 204, '', 'image/x-icon');
+      return;
+    }
+
     if (req.method === 'GET' && ['/dashboard.css', '/dashboard.js'].includes(parsed.pathname)) {
       const fileName = parsed.pathname.slice(1);
       sendFile(res, path.join(extensionDir, fileName), staticContentType(fileName));
@@ -987,13 +898,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && parsed.pathname === '/policy') {
-      if (!requireDeviceOrParent(req, res)) return;
-      sendJson(res, 200, {
-        ok: true,
-        profiles: store.getProfiles(),
-        devices: store.getDevices(),
-        policy: getDefaultContext().policy
-      });
+      policyHandlers.handlePolicyRead(req, res);
       return;
     }
 
@@ -1061,23 +966,22 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && parsed.pathname === '/policy') {
-      await handlePolicyUpdate(req, res);
+      await policyHandlers.handlePolicyUpdate(req, res);
       return;
     }
 
     if (req.method === 'GET' && parsed.pathname === '/policy/export.json') {
-      if (!requireParent(req, res)) return;
-      sendJson(res, 200, { ok: true, policy: getDefaultContext().policy });
+      policyHandlers.handlePolicyExport(req, res);
       return;
     }
 
     if (req.method === 'POST' && parsed.pathname === '/policy/import') {
-      await handlePolicyImport(req, res);
+      await policyHandlers.handlePolicyImport(req, res);
       return;
     }
 
     if (req.method === 'POST' && parsed.pathname === '/policy/evaluate') {
-      await handleEvaluate(req, res);
+      await policyHandlers.handleEvaluate(req, res);
       return;
     }
 
