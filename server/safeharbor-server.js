@@ -369,6 +369,15 @@ function statusHtml(body) {
 </html>`;
 }
 
+function dashboardHtml() {
+  const html = fs.readFileSync(path.join(extensionDir, 'dashboard.html'), 'utf8');
+  const script = fs.readFileSync(path.join(extensionDir, 'dashboard.js'), 'utf8');
+  return html.replace(
+    /<script src="dashboard\.js[^"]*"><\/script>/,
+    `<script>\n${script}\n</script>`
+  );
+}
+
 function escapeHtml(value) {
   return asString(value)
     .replace(/&/g, '&amp;')
@@ -871,7 +880,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'GET' && (parsed.pathname === '/dashboard' || parsed.pathname === '/dashboard.html')) {
-      sendFile(res, path.join(extensionDir, 'dashboard.html'), staticContentType('dashboard.html'));
+      sendHtml(res, 200, dashboardHtml());
       return;
     }
 
