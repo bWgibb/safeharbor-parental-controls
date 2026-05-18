@@ -11,35 +11,96 @@ let policyDirty = false;
 const POLICY_ACTIONS = new Set(['allow', 'block']);
 
 const $ = id => document.getElementById(id);
-const hasChromeApi = typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
+const hasChromeApi = typeof chrome !== 'undefined' && chrome && chrome.storage && chrome.storage.local;
 
-$('refresh').addEventListener('click', loadDashboard);
-$('options').addEventListener('click', openOptions);
-$('backupDb').addEventListener('click', backupDatabase);
-$('exportPolicy').addEventListener('click', exportPolicy);
-$('importPolicy').addEventListener('click', importPolicy);
-$('savePolicy').addEventListener('click', savePolicy);
-$('discardPolicy').addEventListener('click', discardPolicyDraft);
-$('defaultAction').addEventListener('change', () => {
-  policy.defaultAction = $('defaultAction').value;
-  markPolicyDirty();
+window.addEventListener('error', event => {
+  showFatalDashboardError(event.error ? event.error.message : event.message);
 });
-$('allowForm').addEventListener('submit', event => addDomain(event, 'allowedDomains', 'allowDomain', 'allow'));
-$('blockForm').addEventListener('submit', event => addDomain(event, 'blockedDomains', 'blockDomain', 'block'));
-$('scheduleForm').addEventListener('submit', addSchedule);
-$('overrideForm').addEventListener('submit', addOverride);
-$('generateCode').addEventListener('click', generateEnrollmentCode);
-$('applyFilters').addEventListener('click', loadFilteredReports);
-$('clearFilters').addEventListener('click', clearReportFilters);
-$('exportCsv').addEventListener('click', () => exportReport('csv'));
-$('exportJson').addEventListener('click', () => exportReport('json'));
+window.addEventListener('unhandledrejection', event => {
+  const reason = event.reason || {};
+  showFatalDashboardError(reason.message || String(reason));
+});
 
-for (const id of ['alertRepeatedBlock', 'alertSchedule', 'alertTamper', 'alertOffline', 'alertRevoked']) {
-  $(id).addEventListener('change', saveAlertPrefs);
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeDashboard);
+} else {
+  initializeDashboard();
 }
 
-renderScheduleDayPicker();
-loadDashboard();
+function initializeDashboard() {
+  try {
+    requireDashboardElements([
+      'refresh',
+      'options',
+      'backupDb',
+      'exportPolicy',
+      'importPolicy',
+      'savePolicy',
+      'discardPolicy',
+      'defaultAction',
+      'allowForm',
+      'blockForm',
+      'scheduleForm',
+      'overrideForm',
+      'generateCode',
+      'applyFilters',
+      'clearFilters',
+      'exportCsv',
+      'exportJson',
+      'alertRepeatedBlock',
+      'alertSchedule',
+      'alertTamper',
+      'alertOffline',
+      'alertRevoked',
+      'scheduleDays',
+      'status'
+    ]);
+
+    $('refresh').addEventListener('click', loadDashboard);
+    $('options').addEventListener('click', openOptions);
+    $('backupDb').addEventListener('click', backupDatabase);
+    $('exportPolicy').addEventListener('click', exportPolicy);
+    $('importPolicy').addEventListener('click', importPolicy);
+    $('savePolicy').addEventListener('click', savePolicy);
+    $('discardPolicy').addEventListener('click', discardPolicyDraft);
+    $('defaultAction').addEventListener('change', () => {
+      policy = normalizeDashboardPolicy(policy);
+      policy.defaultAction = $('defaultAction').value;
+      markPolicyDirty();
+    });
+    $('allowForm').addEventListener('submit', event => addDomain(event, 'allowedDomains', 'allowDomain', 'allow'));
+    $('blockForm').addEventListener('submit', event => addDomain(event, 'blockedDomains', 'blockDomain', 'block'));
+    $('scheduleForm').addEventListener('submit', addSchedule);
+    $('overrideForm').addEventListener('submit', addOverride);
+    $('generateCode').addEventListener('click', generateEnrollmentCode);
+    $('applyFilters').addEventListener('click', loadFilteredReports);
+    $('clearFilters').addEventListener('click', clearReportFilters);
+    $('exportCsv').addEventListener('click', () => exportReport('csv'));
+    $('exportJson').addEventListener('click', () => exportReport('json'));
+
+    for (const id of ['alertRepeatedBlock', 'alertSchedule', 'alertTamper', 'alertOffline', 'alertRevoked']) {
+      $(id).addEventListener('change', saveAlertPrefs);
+    }
+
+    renderScheduleDayPicker();
+    loadDashboard();
+  } catch (error) {
+    showFatalDashboardError(error.message);
+  }
+}
+
+function requireDashboardElements(ids) {
+  const missing = ids.filter(id => !$(id));
+  if (missing.length) throw new Error(`Dashboard is missing required elements: ${missing.join(', ')}`);
+}
+
+function showFatalDashboardError(message) {
+  const status = document.getElementById('status');
+  if (status) {
+    status.textContent = `Dashboard error: ${message || 'unknown error'}`;
+    status.className = 'error';
+  }
+}
 
 async function loadDashboard() {
   setStatus('Loading...', '');
