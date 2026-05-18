@@ -8,6 +8,7 @@ let state = null;
 let policy = null;
 let originalPolicy = null;
 let policyDirty = false;
+const POLICY_ACTIONS = new Set(['allow', 'block']);
 
 const $ = id => document.getElementById(id);
 const hasChromeApi = typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local;
@@ -51,6 +52,7 @@ async function loadDashboard() {
     if (!settings.token) throw new Error('Missing token. Add it in extension options.');
 
     state = await fetchJson('/status');
+    state.policy = normalizeDashboardPolicy(state.policy);
     policy = cloneJson(state.policy);
     originalPolicy = cloneJson(state.policy);
     policyDirty = false;
@@ -196,7 +198,7 @@ function renderPolicyDraftControls() {
 }
 
 function renderDomainList(targetId, listName) {
-  const nodes = policy[listName].map(rule => {
+  const nodes = asArray(policy[listName]).map(rule => {
     const row = document.createElement('div');
     row.className = 'tag';
     row.append(el('span', rule.value || rule.domain));
@@ -233,7 +235,7 @@ function renderCategories() {
 }
 
 function renderSchedules() {
-  const nodes = policy.schedules.map(rule => {
+  const nodes = asArray(policy.schedules).map(rule => {
     const days = Array.isArray(rule.days) && rule.days.length ? ` ${rule.days.join(',')}` : '';
     const text = `${rule.action} ${rule.start}-${rule.end}${days} ${rule.reason || ''}`;
     return stackItem(text, () => {
@@ -246,7 +248,7 @@ function renderSchedules() {
 }
 
 function renderOverrides() {
-  const nodes = policy.temporaryOverrides.map(rule => {
+  const nodes = asArray(policy.temporaryOverrides).map(rule => {
     const text = `${rule.action} ${rule.value || rule.domain} until ${formatReginaTime(rule.expiresAt)}`;
     return stackItem(text, () => {
       policy.temporaryOverrides = policy.temporaryOverrides.filter(item => item.id !== rule.id);
@@ -338,6 +340,7 @@ function addDomain(event, listName, inputId, action) {
   const input = $(inputId);
   const value = normalizeDomain(input.value);
   if (!value) return;
+  policy[listName] = asArray(policy[listName]);
   policy[listName].push({
     id: `${action}-${value}-${Date.now()}`,
     value,
@@ -352,6 +355,7 @@ function addDomain(event, listName, inputId, action) {
 function addSchedule(event) {
   event.preventDefault();
   const days = selectedScheduleDays();
+  policy.schedules = asArray(policy.schedules);
   policy.schedules.push({
     id: `schedule-${Date.now()}`,
     action: $('scheduleAction').value,
@@ -402,6 +406,7 @@ function addOverride(event) {
   const value = normalizeDomain($('overrideDomain').value);
   const minutes = Math.max(5, Number($('overrideMinutes').value) || 60);
   if (!value) return;
+  policy.temporaryOverrides = asArray(policy.temporaryOverrides);
   policy.temporaryOverrides.push({
     id: `override-${Date.now()}`,
     action: $('overrideAction').value,
@@ -623,6 +628,45 @@ function normalizeDomain(value) {
     .replace(/^https?:\/\//, '')
     .replace(/\/.*$/, '')
     .replace(/^\.+|\.+$/g, '');
+}
+
+function normalizeDashboardPolicy(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    id: stringOr(source.id, 'local-policy'),
+    name: stringOr(source.name, 'Local Policy'),
+    profileId: stringOr(source.profileId, 'default-child'),
+    defaultAction: POLICY_ACTIONS.has(source.defaultAction) ? source.defaultAction : 'allow',
+    blockedDomains: arrayOfObjects(source.blockedDomains),
+    allowedDomains: arrayOfObjects(source.allowedDomains),
+    categories: normalizeCategories(source.categories),
+    blockedCategories: Array.isArray(source.blockedCategories)
+      ? source.blockedCategories.filter(item => typeof item === 'string')
+      : [],
+    schedules: arrayOfObjects(source.schedules),
+    temporaryOverrides: arrayOfObjects(source.temporaryOverrides)
+  };
+}
+
+function arrayOfObjects(value) {
+  return Array.isArray(value) ? value.filter(item => item && typeof item === 'object') : [];
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeCategories(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const categories = {};
+  for (const [name, domains] of Object.entries(value)) {
+    if (Array.isArray(domains)) categories[name] = domains.filter(item => typeof item === 'string');
+  }
+  return categories;
+}
+
+function stringOr(value, fallback) {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
 function summaryRow(label, value) {

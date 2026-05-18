@@ -300,7 +300,7 @@ function getDefaultContext() {
   const device = store.getDevice(configuredDeviceId())
     || store.getDevices().find(item => item.profileId === profile.id)
     || store.getDevices()[0];
-  const policy = store.getPolicy(profile.id);
+  const policy = normalizePolicy(store.getPolicy(profile.id) || defaultPolicy());
   return { profile, device, policy };
 }
 
@@ -731,7 +731,7 @@ function syncPolicyBody(deviceId) {
     ok: true,
     device: store.getDevice(device.id),
     profile: store.getProfiles().find(item => item.id === profileId) || fallback.profile,
-    policy: policyRecord ? policyRecord.policy : fallback.policy,
+    policy: policyRecord ? normalizePolicy(policyRecord.policy) : fallback.policy,
     policyUpdatedAt: policyRecord ? policyRecord.updatedAt : null,
     policyRevision: policyRecord ? policyRecord.updatedAt : null,
     serverTime: nowIso()
