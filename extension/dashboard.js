@@ -1,15 +1,7 @@
 'use strict';
 
 const DEFAULT_SERVER_URL = 'http://127.0.0.1:43718';
-const REGINA_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'America/Regina',
-  month: 'short',
-  day: '2-digit',
-  hour: 'numeric',
-  minute: '2-digit',
-  hour12: true,
-  timeZoneName: 'shortOffset'
-});
+const REGINA_TIME_FORMAT = createReginaTimeFormatter();
 
 let settings = null;
 let state = null;
@@ -59,8 +51,8 @@ async function loadDashboard() {
     if (!settings.token) throw new Error('Missing token. Add it in extension options.');
 
     state = await fetchJson('/status');
-    policy = structuredClone(state.policy);
-    originalPolicy = structuredClone(state.policy);
+    policy = cloneJson(state.policy);
+    originalPolicy = cloneJson(state.policy);
     policyDirty = false;
     renderDashboard();
     setStatus(`Updated ${formatReginaTime(new Date().toISOString())}.`, 'success');
@@ -430,8 +422,8 @@ async function savePolicy() {
       method: 'POST',
       body: JSON.stringify({ policy })
     });
-    policy = structuredClone(result.policy);
-    originalPolicy = structuredClone(result.policy);
+    policy = cloneJson(result.policy);
+    originalPolicy = cloneJson(result.policy);
     policyDirty = false;
     await loadDashboard();
   } catch (error) {
@@ -441,7 +433,7 @@ async function savePolicy() {
 }
 
 function discardPolicyDraft() {
-  policy = structuredClone(originalPolicy || state.policy);
+  policy = cloneJson(originalPolicy || state.policy);
   policyDirty = false;
   renderPolicy();
   setStatus('Policy changes discarded.', '');
@@ -617,7 +609,7 @@ function openOptions() {
     chrome.runtime.openOptionsPage();
     return;
   }
-  const token = prompt('SafeHarbor parent token', settings?.token || '');
+  const token = prompt('SafeHarbor parent token', settings && settings.token ? settings.token : '');
   if (token != null) {
     saveWebSettings({ token, serverUrl: window.location.origin });
     loadDashboard();
@@ -653,7 +645,7 @@ async function generateEnrollmentCode() {
   try {
     const result = await fetchJson('/enrollment/code', {
       method: 'POST',
-      body: JSON.stringify({ profileId: state.profiles[0]?.id })
+      body: JSON.stringify({ profileId: state.profiles[0] ? state.profiles[0].id : '' })
     });
     $('pairingCode').textContent = `${result.code} · expires ${formatReginaTime(result.expiresAt)}`;
     await loadDashboard();
@@ -689,6 +681,31 @@ function formatReginaTime(value) {
   return REGINA_TIME_FORMAT.format(date)
     .replace('GMT-06:00', 'GMT-6')
     .replace('GMT-06', 'GMT-6');
+}
+
+function createReginaTimeFormatter() {
+  const baseOptions = {
+    timeZone: 'America/Regina',
+    month: 'short',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  };
+  try {
+    return new Intl.DateTimeFormat('en-US', Object.assign({}, baseOptions, {
+      timeZoneName: 'shortOffset'
+    }));
+  } catch (error) {
+    return new Intl.DateTimeFormat('en-US', Object.assign({}, baseOptions, {
+      timeZoneName: 'short'
+    }));
+  }
+}
+
+function cloneJson(value) {
+  if (typeof structuredClone === 'function') return structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
 }
 
 function setStatus(text, className) {
