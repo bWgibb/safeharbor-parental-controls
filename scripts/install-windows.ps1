@@ -7,9 +7,15 @@ $ErrorActionPreference = "Stop"
 $TaskName = "SafeHarbor"
 $Root = Split-Path -Parent $PSScriptRoot
 $Server = Join-Path $Root "server\safeharbor-server.js"
+$StartupDir = [Environment]::GetFolderPath("Startup")
+$StartupScript = Join-Path $StartupDir "SafeHarbor.cmd"
 
 if ($Uninstall) {
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+  if (Test-Path $StartupScript) {
+    Remove-Item $StartupScript -Force
+    Write-Host "Removed startup fallback: $StartupScript"
+  }
   Write-Host "Removed scheduled task: $TaskName"
   exit 0
 }
@@ -39,16 +45,28 @@ $Trigger = New-ScheduledTaskTrigger -AtLogOn
 $Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
-Register-ScheduledTask `
-  -TaskName $TaskName `
-  -Action $Action `
-  -Trigger $Trigger `
-  -Principal $Principal `
-  -Settings $Settings `
-  -Description "Starts the SafeHarbor local parental controls server at login." `
-  -Force | Out-Null
+$InstalledWith = "scheduled task"
+try {
+  Register-ScheduledTask `
+    -TaskName $TaskName `
+    -Action $Action `
+    -Trigger $Trigger `
+    -Principal $Principal `
+    -Settings $Settings `
+    -Description "Starts the SafeHarbor local parental controls server at login." `
+    -Force | Out-Null
 
-Start-ScheduledTask -TaskName $TaskName
+  Start-ScheduledTask -TaskName $TaskName
+} catch {
+  $InstalledWith = "startup script"
+  New-Item -ItemType Directory -Path $StartupDir -Force | Out-Null
+  $CmdServer = $Server.Replace('"', '""')
+  $CmdNode = $Node.Replace('"', '""')
+  Set-Content -Path $StartupScript -Encoding ASCII -Value "@echo off`r`nstart ""SafeHarbor"" /min ""$CmdNode"" ""$CmdServer""`r`n"
+  Start-Process -FilePath $Node -ArgumentList "`"$Server`"" -WindowStyle Minimized
+  Write-Warning "Scheduled task install failed: $($_.Exception.Message)"
+  Write-Warning "Installed user startup fallback instead: $StartupScript"
+}
 
 if (!$SkipHealthCheck) {
   $HealthUrl = "http://127.0.0.1:43718/health"
@@ -69,7 +87,7 @@ if (!$SkipHealthCheck) {
   }
 }
 
-Write-Host "Installed and started scheduled task: $TaskName"
+Write-Host "Installed and started SafeHarbor using: $InstalledWith"
 Write-Host "Server: $Server"
 Write-Host "Print the extension token with:"
 Write-Host "  node `"$Server`" --show-token"
