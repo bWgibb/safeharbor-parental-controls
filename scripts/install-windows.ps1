@@ -7,9 +7,15 @@ $ErrorActionPreference = "Stop"
 $TaskName = "SafeHarbor"
 $Root = Split-Path -Parent $PSScriptRoot
 $Server = Join-Path $Root "server\safeharbor-server.js"
+$StartupDir = [Environment]::GetFolderPath("Startup")
+$StartupScript = Join-Path $StartupDir "SafeHarbor.cmd"
 
 if ($Uninstall) {
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+  if (Test-Path $StartupScript) {
+    Remove-Item $StartupScript -Force
+    Write-Host "Removed startup fallback: $StartupScript"
+  }
   Write-Host "Removed scheduled task: $TaskName"
   exit 0
 }
@@ -36,19 +42,40 @@ $PowerShellArgs = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Comma
 
 $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $PowerShellArgs
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
-$Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+$RunLevel = "Limited"
+if ([enum]::GetNames([Microsoft.PowerShell.Cmdletization.GeneratedTypes.ScheduledTask.RunLevelEnum]) -notcontains $RunLevel) {
+  # Defensive fallback for older/newer ScheduledTasks module enum naming differences.
+  $RunLevel = "Highest"
+}
+$Principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel $RunLevel
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
-Register-ScheduledTask `
-  -TaskName $TaskName `
-  -Action $Action `
-  -Trigger $Trigger `
-  -Principal $Principal `
-  -Settings $Settings `
-  -Description "Starts the SafeHarbor local parental controls server at login." `
-  -Force | Out-Null
+$InstalledWithScheduledTask = $true
+try {
+  Register-ScheduledTask `
+    -TaskName $TaskName `
+    -Action $Action `
+    -Trigger $Trigger `
+    -Principal $Principal `
+    -Settings $Settings `
+    -Description "Starts the SafeHarbor local parental controls server at login." `
+    -Force | Out-Null
 
-Start-ScheduledTask -TaskName $TaskName
+  Start-ScheduledTask -TaskName $TaskName
+} catch {
+  $InstalledWithScheduledTask = $false
+  if ($_.Exception.Message -match "Access is denied") {
+    $StartupCommand = @"
+@echo off
+start "" powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "& '$QuotedNode' '$QuotedServer'"
+"@
+    Set-Content -Path $StartupScript -Value $StartupCommand -Encoding ASCII
+    Start-Process -WindowStyle Hidden -FilePath "powershell.exe" -ArgumentList $PowerShellArgs
+    Write-Warning "Scheduled task registration was denied. Installed per-user startup fallback at: $StartupScript"
+  } else {
+    throw
+  }
+}
 
 if (!$SkipHealthCheck) {
   $HealthUrl = "http://127.0.0.1:43718/health"
@@ -65,11 +92,15 @@ if (!$SkipHealthCheck) {
     }
   }
   if (!$Healthy) {
-    throw "SafeHarbor scheduled task started but health check failed at $HealthUrl"
+    throw "SafeHarbor startup was configured but health check failed at $HealthUrl"
   }
 }
 
-Write-Host "Installed and started scheduled task: $TaskName"
+if ($InstalledWithScheduledTask) {
+  Write-Host "Installed and started scheduled task: $TaskName"
+} else {
+  Write-Host "Installed and started startup-folder fallback: $StartupScript"
+}
 Write-Host "Server: $Server"
 Write-Host "Print the extension token with:"
 Write-Host "  node `"$Server`" --show-token"
