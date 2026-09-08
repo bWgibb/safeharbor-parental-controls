@@ -8,6 +8,26 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
+test('print-config reports effective hub settings without starting the server', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'safeharbor-print-config-'));
+  const result = spawnSync(process.execPath, ['server/safeharbor-server.js', '--print-config'], {
+    cwd: path.join(__dirname, '..'),
+    env: {
+      ...process.env,
+      SAFEHARBOR_HOME: home,
+      SAFEHARBOR_HUB_URL: 'http://192.168.1.218:43718',
+      SAFEHARBOR_HUB_TOKEN: 'a'.repeat(64)
+    },
+    encoding: 'utf8'
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const config = JSON.parse(result.stdout);
+  assert.equal(config.app, 'SafeHarbor');
+  assert.equal(config.hubSyncEnabled, true);
+  assert.equal(config.hubUrl, 'http://192.168.1.218:43718');
+});
+
 test('server starts, evaluates policy, and reports SQLite activity', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'safeharbor-server-'));
   const port = String(45180 + Math.floor(Math.random() * 1000));

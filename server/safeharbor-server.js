@@ -92,11 +92,6 @@ const policyHandlers = createPolicyHandlers({
   validateRawPolicy
 });
 
-if (args.has('--print-config')) {
-  process.stdout.write(JSON.stringify(configBody(), null, 2) + '\n');
-  process.exit(0);
-}
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -110,6 +105,7 @@ function formatReginaTime(value) {
 }
 
 function configBody() {
+  const hubSettings = hubSyncSettings();
   return {
     app: APP_NAME,
     version: VERSION,
@@ -120,7 +116,8 @@ function configBody() {
     databaseFile: paths.database,
     logsDir: paths.logs,
     alertsDir: paths.alerts,
-    hubSyncEnabled: Boolean(hubSyncSettings()),
+    hubSyncEnabled: Boolean(hubSettings),
+    hubUrl: hubSettings ? hubSettings.url : '',
     deviceId: configuredDeviceId(),
     hubLastEventId: config.hubLastEventId,
     hubLastSyncAt: config.hubLastSyncAt,
@@ -848,6 +845,12 @@ const hubSync = createHubSync({
   validatePolicy: validateNormalizedPolicy,
   writeJson
 });
+
+if (args.has('--print-config')) {
+  process.stdout.write(JSON.stringify(configBody(), null, 2) + '\n');
+  store.close();
+  process.exit(0);
+}
 
 function hubSyncSettings() {
   return hubSync.settings();

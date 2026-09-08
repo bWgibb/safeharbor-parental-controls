@@ -206,35 +206,59 @@ Keep the hub port private to the home LAN. Do not port-forward it to the interne
 
 ## Windows Laptop Deployment
 
-1. Install Node.js 20 LTS or newer on the Windows laptop.
+For a complete first-device checklist, use [the Windows device onboarding guide](docs/WINDOWS-DEVICE-ONBOARDING.md).
 
-2. Copy this project folder to the laptop, for example:
+1. Make sure Windows Package Manager (`winget`) is available. It is included with current Windows 10 and Windows 11 installations. If it is unavailable, install Node.js 20 LTS or newer manually.
+
+2. Copy this project folder to the laptop. The source copy can be temporary because the installer puts the runnable files in `%LOCALAPPDATA%\SafeHarbor`.
 
    ```text
    C:\SafeHarbor
    ```
 
-3. Open PowerShell in the project folder and run:
+3. Open the SafeHarbor dashboard on the home hub and generate a six-digit pairing code. The code expires after 15 minutes and can enroll one device.
+
+4. Sign in to the Windows account that the child will use. Open PowerShell in the project folder and run the installer with the hub URL, pairing code, and a name for the device:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+   powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 `
+     -InstallNode `
+     -HubUrl "http://192.168.1.218:43718" `
+     -PairingCode "123456" `
+     -DeviceName "Child Laptop"
    ```
 
-4. Print the token:
+   The installer installs Node.js LTS through `winget` when Node.js is missing, copies SafeHarbor into a stable per-user folder, runs `npm ci`, enrolls the device, registers startup, and starts the local agent. It does not report success until the authenticated local API responds and the first hub sync completes.
+
+   Rerunning the same command is safe. If the device is already enrolled with that hub, the installer reuses its existing device token instead of consuming the pairing code. To re-enroll a revoked device or move it to another hub, generate a new pairing code and add `-ForceEnroll`.
+
+5. The installer prints the local extension token and the fixed extension folder. To print the token again later:
 
    ```powershell
-   node .\server\safeharbor-server.js --show-token
+   node "$env:LOCALAPPDATA\SafeHarbor\server\safeharbor-server.js" --show-token
    ```
 
-5. In Chrome on the laptop, load the `extension` folder as an unpacked extension and paste that token into the extension options page.
+6. In Chrome on the laptop:
 
-The Windows installer creates a current-user scheduled task named `SafeHarbor` so the server starts at login. It binds to `127.0.0.1` unless `SAFEHARBOR_HOST` is set.
+   - Open `chrome://extensions`.
+   - Enable Developer mode.
+   - Choose **Load unpacked** and select `%LOCALAPPDATA%\SafeHarbor\extension`.
+   - Open the SafeHarbor extension options.
+   - Keep the server URL set to `http://127.0.0.1:43718`.
+   - Paste the local extension token and save.
+   - Run the extension health check.
+
+The Windows installer creates a current-user scheduled task named `SafeHarbor` so the local agent starts when that user signs in. It binds to `127.0.0.1` unless `SAFEHARBOR_HOST` is set. The extension talks to this local agent; the local agent uses its enrolled device token to sync policy and activity with the home hub.
 
 To uninstall the startup task:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -Uninstall
+powershell -ExecutionPolicy Bypass `
+  -File "$env:LOCALAPPDATA\SafeHarbor\scripts\install-windows.ps1" `
+  -Uninstall
 ```
+
+Uninstall stops the running agent and removes both startup methods. It leaves the application files, configuration, and activity database in place.
 
 ## API
 
