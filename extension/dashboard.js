@@ -746,17 +746,33 @@ function stackItem(text, onRemove) {
 }
 
 async function generateEnrollmentCode() {
+  const button = $('generateCode');
+  button.disabled = true;
   setStatus('Generating pairing code...', '');
+  setPairingCodeMessage('Generating pairing code...', '');
   try {
+    if (!settings || !settings.token) throw new Error('Missing token. Add it in extension options.');
+    if (!state || !Array.isArray(state.profiles)) {
+      throw new Error('Dashboard is not connected. Refresh after saving the server URL and parent token.');
+    }
     const result = await fetchJson('/enrollment/code', {
       method: 'POST',
       body: JSON.stringify({ profileId: state.profiles[0] ? state.profiles[0].id : '' })
     });
-    $('pairingCode').textContent = `${result.code} · expires ${formatReginaTime(result.expiresAt)}`;
+    setPairingCodeMessage(`${result.code} - expires ${formatReginaTime(result.expiresAt)}`, '');
     await loadDashboard();
   } catch (error) {
+    setPairingCodeMessage(error.message, 'error');
     setStatus(error.message, 'error');
+  } finally {
+    button.disabled = false;
   }
+}
+
+function setPairingCodeMessage(text, className) {
+  const node = $('pairingCode');
+  node.textContent = text;
+  node.className = className ? `pairing-code ${className}` : 'pairing-code';
 }
 
 function removeButton(onClick) {

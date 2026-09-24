@@ -244,6 +244,13 @@ label {
   font-weight: 750;
   letter-spacing: 0;
   margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+
+.pairing-code.error {
+  color: #a22222;
+  font-size: 14px;
+  font-weight: 650;
 }
 
 table {
