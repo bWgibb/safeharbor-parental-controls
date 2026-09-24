@@ -2,13 +2,15 @@
 
 ## Current Deployment
 
-- Raspberry Pi home hub hostname: `homeautomation.local`
-- Hub dashboard URL: `http://homeautomation.local:43718/dashboard`
-- Pi deployment user used so far: `pi`
-- Project staging path on Pi: `/home/pi/safeharbor`
-- Intended service path on Pi: `/opt/safeharbor`
-- Hub data path: `/var/lib/safeharbor`
-- Hub service name: `safeharbor-hub`
+- Raspberry Pi home hub hostname: `homeserver` (resolved by the router's LAN DNS; mDNS is not used, so `.local` names do not resolve).
+- Hub dashboard URL: `http://homeserver:43718/dashboard`
+- The Pi is a shared home server running other services. Keep SafeHarbor changes scoped to its own user, paths, and port.
+- Project staging path on Pi: `~/safeharbor` in the deploy user's home
+- Service path on Pi: `/opt/safeharbor`
+- Hub data path: `/var/lib/safeharbor` (owned by system user `safeharbor`, mode 750)
+- Hub service name: `safeharbor-hub`, running as system user `safeharbor`
+- LAN-only firewall: `safeharbor-hub-firewall.service` loads `/etc/safeharbor/hub-firewall.nft`, an nftables table that only allows tcp/43718 from the home LAN subnet and loopback.
+- Keep host-specific details (SSH users, IPs, account names) out of this public repo.
 
 ## Architecture Direction
 
@@ -28,8 +30,8 @@
 On the Pi, print the parent token and legacy local-device token with:
 
 ```sh
-sudo -u "$USER" env SAFEHARBOR_HOME=/var/lib/safeharbor node /opt/safeharbor/server/safeharbor-server.js --show-token
-sudo -u "$USER" env SAFEHARBOR_HOME=/var/lib/safeharbor node /opt/safeharbor/server/safeharbor-server.js --show-device-token
+sudo -u safeharbor env SAFEHARBOR_HOME=/var/lib/safeharbor node /opt/safeharbor/server/safeharbor-server.js --show-token
+sudo -u safeharbor env SAFEHARBOR_HOME=/var/lib/safeharbor node /opt/safeharbor/server/safeharbor-server.js --show-device-token
 ```
 
 ## Pi Deploy Workflow
@@ -37,17 +39,23 @@ sudo -u "$USER" env SAFEHARBOR_HOME=/var/lib/safeharbor node /opt/safeharbor/ser
 From the Mac repo:
 
 ```sh
-rsync -av --exclude node_modules --exclude .git ./ pi@homeautomation.local:~/safeharbor/
+rsync -av --exclude node_modules --exclude .git ./ <pi-user>@homeserver:~/safeharbor/
+```
+
+From the Windows repo (Git Bash), ship the committed tree without CRLF conversion:
+
+```sh
+git -c core.autocrlf=false archive --format=tar HEAD | /c/Windows/System32/OpenSSH/ssh.exe <pi-user>@homeserver 'rm -rf ~/safeharbor && mkdir -p ~/safeharbor && tar -x -C ~/safeharbor'
 ```
 
 On the Pi:
 
 ```sh
 sudo mkdir -p /opt/safeharbor
-sudo rsync -av ~/safeharbor/ /opt/safeharbor/
+sudo rsync -a --delete --exclude node_modules ~/safeharbor/ /opt/safeharbor/
 sudo chown -R "$USER:$USER" /opt/safeharbor
 cd /opt/safeharbor
-./scripts/install-raspberry-pi.sh
+SAFEHARBOR_USER=safeharbor SAFEHARBOR_GROUP=safeharbor ./scripts/install-raspberry-pi.sh
 ```
 
 Check service:
@@ -62,7 +70,7 @@ sudo journalctl -u safeharbor-hub -f
 Use this from the Mac repo to populate/test the Pi hub without Windows or browser install:
 
 ```sh
-SAFEHARBOR_SERVER_URL=http://homeautomation.local:43718 \
+SAFEHARBOR_SERVER_URL=http://homeserver:43718 \
 SAFEHARBOR_TOKEN=<parent-token> \
 npm run simulate
 ```
@@ -70,7 +78,7 @@ npm run simulate
 Duplicate/idempotency check:
 
 ```sh
-SAFEHARBOR_SERVER_URL=http://homeautomation.local:43718 \
+SAFEHARBOR_SERVER_URL=http://homeserver:43718 \
 SAFEHARBOR_TOKEN=<parent-token> \
 npm run simulate -- --duplicate
 ```
@@ -90,7 +98,7 @@ Current test coverage includes rule engine behavior, SQLite/event-store behavior
 Enroll a child agent against the hub with:
 
 ```sh
-npm run enroll-device -- --hub http://homeautomation.local:43718 --code <pairing-code> --name "Child Laptop"
+npm run enroll-device -- --hub http://homeserver:43718 --code <pairing-code> --name "Child Laptop"
 ```
 
 This persists the enrolled device ID and device-scoped hub token in the local SafeHarbor config so browser events are attributed to the enrolled device during hub sync.

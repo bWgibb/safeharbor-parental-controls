@@ -89,7 +89,7 @@ function slug(value) {
 function usage() {
   process.stderr.write([
     'Usage:',
-    '  npm run enroll-device -- --hub http://homeautomation.local:43718 --code 123456 [--name "Child Laptop"] [--deviceId child-laptop-1]',
+    '  npm run enroll-device -- --hub http://homeserver:43718 --code 123456 [--name "Child Laptop"] [--deviceId child-laptop-1]',
     ''
   ].join('\n'));
 }

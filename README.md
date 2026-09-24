@@ -94,7 +94,7 @@ The Raspberry Pi mode is for a home-network hub: the Pi hosts the parent dashboa
 The current home hub target used during development is:
 
 ```text
-http://homeautomation.local:43718/dashboard
+http://homeserver:43718/dashboard
 ```
 
 1. Install Node.js 20 LTS or newer on the Pi.
@@ -108,7 +108,7 @@ http://homeautomation.local:43718/dashboard
    From a Mac development machine, one working copy command is:
 
    ```sh
-   rsync -av --exclude node_modules --exclude .git ./ pi@homeautomation.local:~/safeharbor/
+   rsync -av --exclude node_modules --exclude .git ./ <pi-user>@homeserver:~/safeharbor/
    ```
 
    Then on the Pi:
@@ -147,14 +147,14 @@ http://homeautomation.local:43718/dashboard
 5. For parent dashboard access, open:
 
    ```text
-   http://homeautomation.local:43718/dashboard
+   http://homeserver:43718/dashboard
    ```
 
    Click **Options** and paste the parent token.
 
    If using the Chrome extension dashboard instead, set the extension options on the parent device to:
 
-   - Server URL: `http://homeautomation.local:43718` or `http://<pi-lan-ip>:43718`
+   - Server URL: `http://homeserver:43718` or `http://<pi-lan-ip>:43718`
    - Token: the parent token
 
 6. Open the dashboard. It will read from the Pi hub and show aggregated device/report data.
@@ -169,7 +169,7 @@ Generate a pairing code from the dashboard, enroll the child device, and then ru
 
 ```sh
 npm run enroll-device -- \
-  --hub http://homeautomation.local:43718 \
+  --hub http://homeserver:43718 \
   --code <pairing-code> \
   --name "Child Laptop"
 npm start
@@ -180,7 +180,7 @@ The enrollment command stores the hub URL, enrolled device ID, and enrolled devi
 To test the hub without Windows or a browser extension, run the simulator from another terminal:
 
 ```sh
-SAFEHARBOR_SERVER_URL=http://homeautomation.local:43718 \
+SAFEHARBOR_SERVER_URL=http://homeserver:43718 \
 SAFEHARBOR_TOKEN=<parent-token> \
 npm run simulate
 ```
@@ -188,7 +188,7 @@ npm run simulate
 To verify idempotent sync handling, run:
 
 ```sh
-SAFEHARBOR_SERVER_URL=http://homeautomation.local:43718 \
+SAFEHARBOR_SERVER_URL=http://homeserver:43718 \
 SAFEHARBOR_TOKEN=<parent-token> \
 npm run simulate -- --duplicate
 ```
@@ -314,7 +314,7 @@ These APIs support the Raspberry Pi/home-hub model and act as the local test-dri
 
 Child agents can sync to a hub with:
 
-- `SAFEHARBOR_HUB_URL` - hub URL, for example `http://homeautomation.local:43718`
+- `SAFEHARBOR_HUB_URL` - hub URL, for example `http://homeserver:43718`
 - `SAFEHARBOR_HUB_TOKEN` - enrolled device token from `/devices/enroll`
 - `SAFEHARBOR_HUB_SYNC_INTERVAL_MS` - optional interval, default `60000`
 - `SAFEHARBOR_HUB_SYNC_TIMEOUT_MS` - optional per-request timeout, default `10000`

@@ -51,6 +51,8 @@ fi
 
 sudo mkdir -p "$DATA_DIR"
 sudo chown "$RUN_USER:$RUN_GROUP" "$DATA_DIR"
+# Activity history and tokens live here; keep other accounts on the host out.
+sudo chmod 750 "$DATA_DIR"
 
 sudo tee "$SERVICE_FILE" >/dev/null <<EOF
 [Unit]
