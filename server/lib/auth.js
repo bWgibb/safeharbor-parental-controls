@@ -13,7 +13,7 @@ function tokenMatchesHash(token, expectedHash) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
-function createAuth({ config, store, defaultDevice, sendJson }) {
+function createAuth({ config, store, defaultDevice, getOwnDeviceId = () => defaultDevice().id, sendJson }) {
   function unauthorized(res) {
     sendJson(res, 401, { ok: false, error: 'missing_or_invalid_token' });
   }
@@ -86,7 +86,9 @@ function createAuth({ config, store, defaultDevice, sendJson }) {
       return false;
     }
     if (tokenMatchesHash(token, device.deviceTokenHash)) return true;
-    if (scope === 'legacy-device' && deviceId === defaultDevice().id) return true;
+    // The local device token belongs to this agent's own device, which is the
+    // enrolled device ID once the agent has been paired with a hub.
+    if (scope === 'legacy-device' && (deviceId === defaultDevice().id || deviceId === getOwnDeviceId())) return true;
     forbidden(res, 'device_token_mismatch');
     return false;
   }

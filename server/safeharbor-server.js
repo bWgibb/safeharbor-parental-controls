@@ -75,7 +75,7 @@ const {
   requireDeviceForIdOrParent,
   requireDeviceOrParent,
   requireParent
-} = createAuth({ config, store, defaultDevice, sendJson });
+} = createAuth({ config, store, defaultDevice, getOwnDeviceId: configuredDeviceId, sendJson });
 const policyHandlers = createPolicyHandlers({
   asString,
   domainFromUrl,

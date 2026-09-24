@@ -310,7 +310,8 @@ test('child agent syncs local events to a hub process', async () => {
     assert.equal(childConfig.hubUrl, hubUrl);
     assert.match(childConfig.hubToken, /^[a-f0-9]{64}$/);
     const childUrl = `http://127.0.0.1:${childPort}`;
-    await postJson(`${childUrl}/policy/evaluate`, childConfig.token, {
+    // The extension on an enrolled child uses the agent's device-scoped token, not its parent token.
+    await postJson(`${childUrl}/policy/evaluate`, childConfig.deviceToken, {
       url: 'https://example.com/',
       timestamp: '2026-05-10T13:00:00.000Z',
       source: 'test-child-agent'
