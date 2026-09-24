@@ -49,6 +49,7 @@ const paths = createPaths(resolveBaseDir());
 const config = loadConfig(paths);
 ensureDir(config.capturesDir);
 ensureDir(paths.alerts);
+let hubSync = null;
 
 if (args.has('--show-token')) {
   process.stdout.write(config.parentToken + '\n');
@@ -835,7 +836,7 @@ async function handleBackup(req, res) {
   await sendSqliteBackup({ res, store, nowIso });
 }
 
-const hubSync = createHubSync({
+hubSync = createHubSync({
   asString,
   config,
   getContext: getDefaultContext,
@@ -850,7 +851,7 @@ const hubSync = createHubSync({
 });
 
 function hubSyncSettings() {
-  return hubSync.settings();
+  return hubSync ? hubSync.settings() : null;
 }
 
 function startHubSync() {
