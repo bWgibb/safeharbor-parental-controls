@@ -120,6 +120,7 @@ Status: local dashboard MVP completed. Cloud-backed alert delivery remains futur
 
 - Add basic tamper signals: extension disabled or uninstalled, local server stopped, agent not seen recently, token/config changed, stale policy, or missing browser permissions.
 - Add stronger desktop protection with a native background service, OS login startup, watchdog restart, signed binaries eventually, and parent/admin uninstall token.
+- Add Windows desktop app tracking and control: per-app usage reporting, app blocking, app schedules, and daily time limits for monitored child accounts. Deliver reporting first inside the existing agent, then enforcement, then move it into the native service. See [docs/APP-TRACKING.md](docs/APP-TRACKING.md).
 - Document the limitation that a local administrator can eventually bypass most consumer controls.
 - Expand browser coverage from Chrome to Edge, then Firefox.
 - Detect unsupported browsers.
