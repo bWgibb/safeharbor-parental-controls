@@ -192,19 +192,23 @@ async function evaluateNavigation(details) {
     return;
   }
 
+  // Only a failed agent call is an "agent unavailable" tamper signal. Tab errors (for example
+  // Edge replacing its prerendered new-tab page) must not be reported as tampering.
+  let body;
   try {
-    const body = await sendPolicyEvaluation(settings, details);
-    updatePolicyFromEvaluation(settings, body)
-      .catch(() => {});
-    if (body.decision && body.decision.action === 'block') {
-      await showBlockPage(details.tabId, details.url, body.decision, 'NO');
-      return;
-    }
-    await chrome.action.setBadgeText({ text: '', tabId: details.tabId });
+    body = await sendPolicyEvaluation(settings, details);
   } catch (error) {
     await reportAgentUnavailable(settings, details.url, error);
     throw error;
   }
+  updatePolicyFromEvaluation(settings, body)
+    .catch(() => {});
+  if (body.decision && body.decision.action === 'block') {
+    await showBlockPage(details.tabId, details.url, body.decision, 'NO');
+    return;
+  }
+  await chrome.action.setBadgeText({ text: '', tabId: details.tabId })
+    .catch(() => {});
 }
 
 async function sendPolicyEvaluation(settings, details) {
