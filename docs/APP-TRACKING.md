@@ -1,6 +1,6 @@
 # App Tracking Design (Windows)
 
-Status: proposed. Nothing in this document is implemented yet.
+Status: approved, in progress. See [Decisions](#decisions) at the end of this document.
 
 ## Problem
 
@@ -236,10 +236,11 @@ Daily limits are counted on the device from its local `app_session` events. Days
   - play while the hub is offline and check that events sync afterwards
   - sign in to the parent account and check that nothing is recorded
 
-## Open questions
+## Decisions
 
-1. Report-only first (M1), or go straight to blocking and limits?
-2. Which apps and categories need limits, and how many minutes per day?
-3. Should window titles ever be recorded, or never?
-4. Is a one-time admin install on the family PC acceptable for M3?
-5. Should the child see a small "app use is monitored" notice on sign-in?
+1. **Scope:** all three milestones are in scope. The session helper is written in .NET from the start. In M1 the existing per-user agent runs it, and in M3 the service takes over supervising it, so no M1 code is thrown away.
+2. **Limits:** the feature is built, but the default policy ships with no app limits, schedules, or blocked apps. Parents add them from the dashboard.
+3. **Window titles:** recorded for monitored apps. Titles longer than 200 characters are truncated. This replaces the "not stored by default" privacy default above.
+4. **Admin install:** a one-time admin install (UAC approved by the parent) is acceptable for M3.
+5. **Sign-in notice:** there is no "app use is monitored" notice and no tray icon. The helper shows a short notification only when an app is blocked or closed, or when a limit or schedule is about to take effect.
+6. **Visibility:** unchanged. The service and helper stay visible in Task Manager and the services list. Protection comes from permissions, not concealment.
