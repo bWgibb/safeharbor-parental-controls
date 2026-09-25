@@ -105,7 +105,8 @@ This persists the enrolled device ID and device-scoped hub token in the local Sa
 
 ## Open Work
 
-- Validate real Raspberry Pi service install end to end after each deploy.
-- Validate real Chrome/Edge extension loading when browser access is available.
-- Validate Windows scheduled task and child-account behavior when Windows access is available.
+- Validate real Raspberry Pi service install end to end after each deploy. (First real install validated, including reboot persistence.)
+- Edge: unpacked extension validated on a real child account (block page, allowed-visit reporting, offline blocking from cache, queued sync). Chrome is not set up yet.
+- Windows child account: logon auto-start and hub enrollment validated. Unpacked extensions only pick up code changes after Reload in the browser's extensions page.
+- Extension events report `source: chrome-extension` in every browser, so reports cannot tell Chrome from Edge.
 - Add real email/push delivery later; current alert delivery writes local `.eml` files.
