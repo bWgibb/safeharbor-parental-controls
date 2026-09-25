@@ -116,12 +116,16 @@ function createHubSync({
           profileId: activeDevice.profileId || profile.id,
           createdAt: activeDevice.createdAt
         },
+        // Every local event came from this machine, and the hub only accepts events for the
+        // device that owns the sync token. Events recorded before enrollment carry the default
+        // device ID, so attribute them to the enrolled device and keep the original for audit.
         events: events.map(event => ({
           ...event,
-          deviceId: event.deviceId || deviceId,
+          deviceId,
           profileId: event.profileId || activeDevice.profileId || profile.id,
           metadata: {
             ...(event.metadata || {}),
+            ...(event.deviceId && event.deviceId !== deviceId ? { localDeviceId: event.deviceId } : {}),
             localEventId: event.id
           },
           localEventId: event.id

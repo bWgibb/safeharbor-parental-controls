@@ -272,6 +272,25 @@ test('child agent syncs local events to a hub process', async () => {
     await waitForOutput(hub, 'listening');
     const hubConfig = JSON.parse(fs.readFileSync(path.join(hubHome, 'config.json'), 'utf8'));
     const hubUrl = `http://127.0.0.1:${hubPort}`;
+    // Activity recorded before enrollment (default device ID) must not wedge the first hub sync.
+    const preEnrollChild = spawn(process.execPath, ['server/safeharbor-server.js'], {
+      cwd: root,
+      env: { ...process.env, SAFEHARBOR_HOME: childHome, PORT: childPort },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    try {
+      await waitForOutput(preEnrollChild, 'listening');
+      const preEnrollConfig = JSON.parse(fs.readFileSync(path.join(childHome, 'config.json'), 'utf8'));
+      await postJson(`http://127.0.0.1:${childPort}/policy/evaluate`, preEnrollConfig.deviceToken, {
+        url: 'https://example.com/before-enrollment',
+        timestamp: '2026-05-10T12:00:00.000Z',
+        source: 'test-child-agent'
+      });
+    } finally {
+      preEnrollChild.kill('SIGTERM');
+      await waitForExit(preEnrollChild);
+    }
+
     const enrollmentCode = await postJson(`${hubUrl}/enrollment/code`, hubConfig.token, {
       profileId: 'default-child'
     });
@@ -318,11 +337,11 @@ test('child agent syncs local events to a hub process', async () => {
     });
     await waitFor(async () => {
       const reports = await getJson(`${hubUrl}/reports/local?deviceId=child-agent-1`, hubConfig.token);
-      return reports.reports.counts.blockedVisits >= 1;
+      return reports.reports.counts.blockedVisits >= 2;
     }, 10000);
 
     const hubReports = await getJson(`${hubUrl}/reports/local?deviceId=child-agent-1`, hubConfig.token);
-    assert.equal(hubReports.reports.counts.blockedVisits, 1);
+    assert.equal(hubReports.reports.counts.blockedVisits, 2);
     const syncStatus = await getJson(`${hubUrl}/devices/sync-status`, hubConfig.token);
     assert.ok(syncStatus.devices.some(device => device.id === 'child-agent-1' && device.lastSyncAt));
   } finally {
